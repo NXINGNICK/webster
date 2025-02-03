@@ -1,0 +1,49 @@
+name: Webster
+version: '${project.version}'
+main: me.nxingnick.webster.WebsterPlugin
+api-version: '1.20'
+description: A comprehensive web management system for Eden Gate 2.0 with content management capabilities.
+author: nxingnick
+prefix: Webster
+
+commands:
+  webster:
+    description: Manage the Webster HTTP server, user registrations, and content.
+    usage: |-
+      /webster <command> [args]
+      Commands:
+        start - Start the HTTP server
+        stop - Stop the HTTP server
+        status - Check server status
+        reg list [all|accepted|denied] - List registrations
+        reg accept <player> - Accept registration
+        reg deny <player> <reason> - Deny registration
+        alogin <email> - Create/update admin account
+        email <recipient> <message> - Send an email
+        dwipe confirm - Wipe all Webster data (DANGEROUS!)
+    permission: webster.manage
+    permission-message: §cYou do not have permission to manage the Webster plugin.
+  wb:
+    description: Webster plugin commands
+    usage: /wb <start|stop|status|reg list|reg accept|reg deny|alogin|email|dwipe>
+    aliases: [webster]
+
+permissions:
+  webster.manage:
+    description: Allows management of the Webster plugin's core functions
+    default: op
+    children:
+      webster.user: true
+  webster.user:
+    description: Allows access to user commands
+    default: true
+  webster.admin:
+    description: Allows access to admin commands
+    default: op
+    children:
+      webster.manage: true
+  webster.content:
+    description: Allows editing website content through the admin panel
+    default: op
+    children:
+      webster.manage: true

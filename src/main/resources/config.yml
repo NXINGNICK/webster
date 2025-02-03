@@ -1,0 +1,53 @@
+mysql:
+  host: localhost
+  port: 3306
+  database: webster_db
+  username: root
+  password: password
+
+server-port: 8080
+
+email:
+  enabled: true
+  smtp:
+    host: smtp.gmail.com
+    port: 587
+    username: your-email@gmail.com
+    password: your-app-password
+    auth: true
+    starttls: true
+  verificationLinkBase: "http://your-domain:port/verify?token="
+  # Email templates used by EmailTemplateManager
+  templates:
+    registration:
+      subject: "Registration Confirmation"
+      body: "Hello {username},\n\nThank you for registering with IGN: {ign}, Discord: {discord}, Telegram: {telegram}, Email: {email}, Platform: {type}.\n\nWe're excited to have you!"
+    admin_notification:
+      subject: "New Registration Alert"
+      body: "Attention Admin,\n\nA new user has just registered!\nIGN: {ign}\nDiscord: {discord}\nTelegram: {telegram}\nEmail: {email}\nType: {type}\n\nPlease review at your convenience."
+    verification:
+      subject: "Complete Your Account Verification"
+      body: "Hello {username},\n\nPlease verify your account by clicking:\n{verification_link}\n\nThank you!"
+    acceptance:
+      subject: "Registration Accepted"
+      body: "Hello {username},\n\nYour registration has been accepted! You can now join the server.\n\nWelcome to Eden Gate 2.0!"
+    denial:
+      subject: "Registration Status Update"
+      body: "Hello {username},\n\nUnfortunately, your registration was denied.\nReason: {reason}\n\nIf you believe this is a mistake, please contact us."
+
+# This list is used by fallback method for emailing admins in handleRegistrationEmail() if emailManager is null
+adminEmails:
+  - "admin1@example.com"
+  - "admin2@example.com"
+
+# Used in handleRegistrationEmail() for sending notifications via EmailTemplateManager
+registration:
+  notifications:
+    admin_emails:
+      - "admin1@example.com"
+      - "admin2@example.com"
+
+# Whitelist commands for in-game acceptance
+whitelist:
+  java: "whitelist add {ign}"
+  bedrock: "fwhitelist add {ign}"

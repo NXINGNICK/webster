@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Sign Up - Eden Gate 2.0</title>
+    <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+<div class="background"></div>
+
+<!-- Header with Logo -->
+<header>
+    <div class="logo-container">
+        <img src="../logos/logo-dark.png" alt="Eden Gate Logo" class="logo dark-logo" />
+        <img src="../logos/logo-bright.png" alt="Eden Gate Logo" class="logo light-logo" />
+    </div>
+</header>
+
+<!-- Signup Form -->
+<main>
+    <section class="signup-form">
+        <h2>Create Your Account</h2>
+        <form id="signupForm">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input
+                        type="email"
+                        id="email"
+                        name="email"
+                        placeholder="Enter your email"
+                        required
+                />
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        placeholder="Enter your password"
+                        required
+                />
+            </div>
+            <div class="form-group">
+                <label for="confirmPassword">Confirm Password</label>
+                <input
+                        type="password"
+                        id="confirmPassword"
+                        name="confirmPassword"
+                        placeholder="Confirm your password"
+                        required
+                />
+            </div>
+            <div class="form-group">
+                <button
+                        type="submit"
+                        class="submit-btn"
+                >
+                    Sign Up
+                </button>
+            </div>
+            <div class="form-group">
+                <p>
+                    Already have an account?
+                    <!-- Adjust path if your login page differs -->
+                    <a href="../login/login.html">Log in here</a>.
+                </p>
+            </div>
+        </form>
+        <!-- Used by script.js to display success/error messages -->
+        <div id="message" class="message"></div>
+    </section>
+</main>
+
+<!-- Theme Toggle Button -->
+<button
+        id="themeToggle"
+        class="theme-toggle"
+>
+    🌓
+</button>
+
+<!-- Footer -->
+<footer>
+    <p>&copy; 2025 Eden Gate. All rights reserved.</p>
+</footer>
+
+<script src="../script.js"></script>
+</body>
+</html>
+</qodoArtifact>

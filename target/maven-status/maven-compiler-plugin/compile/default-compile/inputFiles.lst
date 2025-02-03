@@ -1,0 +1,8 @@
+/home/chester/webster/src/main/java/me/nxingnick/webster/WebsterPlugin.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/commands/WebsterCommandExecutor.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/database/DatabaseHelper.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/email/EmailService.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/email/EmailTemplateManager.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/http/APIRouteHandler.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/http/WebsterHttpServer.java
+/home/chester/webster/src/main/java/me/nxingnick/webster/security/SecurityUtils.java

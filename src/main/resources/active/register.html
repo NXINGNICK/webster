@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration Form</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="logo-container">
+            <img src="logos/logo-dark.png" alt="Logo" class="logo dark-logo">
+            <img src="logos/logo-bright.png" alt="Logo" class="logo bright-logo">
+        </div>
+
+        <form id="registrationForm">
+            <!-- Platform Selection -->
+            <div class="form-group">
+                <label>Platform</label>
+                <div class="platform-options horizontal">
+                    <label class="platform-option">
+                        <input type="radio" name="type" value="Java" required>
+                        <span class="radio-circle"></span>
+                        Java
+                    </label>
+                    <label class="platform-option">
+                        <input type="radio" name="type" value="Bedrock" required>
+                        <span class="radio-circle"></span>
+                        Bedrock
+                    </label>
+                    <label class="platform-option">
+                        <input type="radio" name="type" value="Both" required>
+                        <span class="radio-circle"></span>
+                        Both
+                    </label>
+                </div>
+            </div>
+
+            <!-- Java IGN Field -->
+            <div class="form-group" id="javaIgnField" style="display: none;">
+                <label for="javaIgn">Java In-game Name</label>
+                <input type="text" id="javaIgn" name="javaIgn" placeholder="Enter your Java in-game name">
+            </div>
+
+            <!-- Bedrock IGN Field -->
+            <div class="form-group" id="bedrockIgnField" style="display: none;">
+                <label for="bedrockIgn">Bedrock In-game Name</label>
+                <input type="text" id="bedrockIgn" name="bedrockIgn" placeholder="Enter your Bedrock in-game name">
+            </div>
+
+            <!-- Discord Username -->
+            <div class="form-group">
+                <label for="discord">Discord Username</label>
+                <input type="text" id="discord" name="discord" placeholder="Enter your Discord username" required>
+            </div>
+
+            <!-- Telegram Username -->
+            <div class="form-group">
+                <label for="telegram">Telegram Username</label>
+                <input type="text" id="telegram" name="telegram" placeholder="Enter your Telegram username" required>
+            </div>
+
+            <!-- Submit Button -->
+            <div class="submit-btn-container">
+                <button type="submit" class="submit-btn">SUBMIT</button>
+            </div>
+        </form>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
