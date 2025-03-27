@@ -1,28 +1,33 @@
-import React, { useState, useEffect, FormEvent, ChangeEvent } from 'react';
+import React, { useState, useEffect, ChangeEvent, FormEvent, useRef } from 'react';
 
-// --- TypeScript Interfaces ---
+// --- Type Definitions ---
 
 interface User {
   id: string;
-  username: string;
   email: string;
-  profilePicUrl?: string;
-  badges: string[];
+  password?: string; // Only stored temporarily during registration/login, not persisted in this simulation
+  username: string;
+  profilePic: string | null;
   isVerified: boolean;
+  isAdmin?: boolean; // Flag if linked to an admin account
+  badges: string[]; // Array of badge IDs
 }
 
-interface AdminUser extends User {
-  isAdmin: true;
-  permissions: string[];
-  linkedUserId?: string;
-  passwordChanged: boolean;
+type AdminPermission = 'manageContent' | 'manageStyles' | 'manageBlogs' | 'manageUsers' | 'manageAdmins' | 'manageSettings' | 'manageShop' | 'manageBadges' | 'moderateComments';
+
+interface Admin {
+  id: string;
+  email: string;
+  password?: string; // As above
+  permissions: AdminPermission[];
+  requiresPasswordChange: boolean;
 }
 
 interface BlogPost {
   id: string;
   title: string;
   content: string;
-  authorId: string;
+  authorId: string; // User ID
   createdAt: Date;
   comments: Comment[];
 }
@@ -30,8 +35,8 @@ interface BlogPost {
 interface Comment {
   id: string;
   postId: string;
-  authorId: string;
-  text: string;
+  authorId: string; // User ID or 'admin'
+  content: string;
   createdAt: Date;
 }
 
@@ -39,478 +44,564 @@ interface UserPost {
   id: string;
   authorId: string;
   content: string;
-  mediaUrl?: string; // For uploads (simulated)
+  imageUrl?: string; // Simulate uploaded image URL
   createdAt: Date;
 }
 
 interface Badge {
-  id: string;
-  name: string;
-  emoji: string;
-  description: string;
+    id: string;
+    name: string;
+    emoji: string;
+    description: string;
 }
 
-interface SiteStyles {
-  primaryColor: string; // e.g., 'blue', 'green', 'purple', 'red', 'yellow'
-  fontFamily: string; // e.g., 'sans', 'serif', 'mono'
-  roundedCorners: string; // e.g., 'none', 'sm', 'md', 'lg', 'full'
+interface SiteSettings {
+    primaryColor: string;
+    secondaryColor: string;
+    // Add more theme options as needed
 }
 
-// --- Permissions Constants ---
-const PERMISSIONS = {
-  MANAGE_CONTENT: 'manage_content',
-  MANAGE_STYLES: 'manage_styles',
-  MANAGE_BLOGS: 'manage_blogs',
-  MANAGE_USERS: 'manage_users',
-  MANAGE_ADMINS: 'manage_admins',
-  MANAGE_BADGES: 'manage_badges',
-  VIEW_SHOP: 'view_shop',
-  CONFIGURE_SYSTEM: 'configure_system',
-  MODERATE_POSTS: 'moderate_posts',
-  COMMENT_AS_ADMIN: 'comment_as_admin',
-};
-
-// --- Utility Functions ---
-const generateId = () => Math.random().toString(36).substring(2, 15);
+interface SftpConfig {
+    host: string;
+    port: string;
+    user: string;
+    pass: string;
+}
 
 // --- Main Component ---
+
 const MinecraftWebsite: React.FC = () => {
-  // --- State ---
+  // --- State Variables ---
   const [currentPage, setCurrentPage] = useState<string>('home');
-  const [loggedInUser, setLoggedInUser] = useState<User | AdminUser | null>(null);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentAdmin, setCurrentAdmin] = useState<Admin | null>(null);
+
+  // Data Stores (Simulated Database)
   const [users, setUsers] = useState<User[]>([
-    // Add some dummy users if needed for testing
+     { id: 'user1', email: 'test@example.com', username: 'TestUser', profilePic: null, isVerified: true, badges: ['badge1'] },
+     { id: 'adminlink', email: 'admin@mmpcs.net', username: 'AdminLinkedUser', profilePic: null, isVerified: true, isAdmin: true, badges: ['badge_admin', 'badge1'] },
   ]);
-  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([
-    {
-      id: 'admin-001',
-      username: 'Admin',
-      email: 'admin@mmpcs.net',
-      isAdmin: true,
-      permissions: Object.values(PERMISSIONS), // Default admin has all permissions
-      passwordChanged: false, // Needs to change password
-      isVerified: true,
-      badges: [],
-    },
+  const [admins, setAdmins] = useState<Admin[]>([
+    { id: 'admin1', email: 'admin@mmpcs.net', password: 'adminpassword', permissions: ['manageContent', 'manageStyles', 'manageBlogs', 'manageUsers', 'manageAdmins', 'manageSettings', 'manageShop', 'manageBadges', 'moderateComments'], requiresPasswordChange: true }
   ]);
   const [blogPosts, setBlogPosts] = useState<BlogPost[]>([
-    { id: 'blog-1', title: 'Welcome to Our Server!', content: 'Get ready for adventure!', authorId: 'admin-001', createdAt: new Date(), comments: [] },
-    { id: 'blog-2', title: 'New Update Deployed', content: 'Check out the latest features.', authorId: 'admin-001', createdAt: new Date(), comments: [] },
+    { id: 'blog1', title: 'Welcome to the Server!', content: 'This is the first blog post. Enjoy your stay!', authorId: 'adminlink', createdAt: new Date(), comments: [] },
+    { id: 'blog2', title: 'New Update v1.1', content: 'We have updated the server with new features.', authorId: 'adminlink', createdAt: new Date(), comments: [
+        { id: 'c1', postId: 'blog2', authorId: 'user1', content: 'Great update!', createdAt: new Date() },
+        { id: 'c2', postId: 'blog2', authorId: 'admin', content: 'Glad you like it!', createdAt: new Date() }, // Admin comment
+    ] },
   ]);
-  const [userPosts, setUserPosts] = useState<UserPost[]>([]);
+  const [userPosts, setUserPosts] = useState<UserPost[]>([
+      { id: 'upost1', authorId: 'user1', content: 'Having fun mining!', createdAt: new Date() }
+  ]);
   const [badges, setBadges] = useState<Badge[]>([
-    { id: 'badge-1', name: 'Founder', emoji: '👑', description: 'Original server founder' },
-    { id: 'badge-2', name: 'Veteran', emoji: '🛡️', description: 'Played for over a year' },
+      { id: 'badge1', name: 'Early Bird', emoji: '🐦', description: 'Joined during the first week.' },
+      { id: 'badge_admin', name: 'Server Admin', emoji: '👑', description: 'Official Server Administrator.' }
   ]);
-  const [serverStatus, setServerStatus] = useState<'online' | 'offline' | 'maintenance'>('online');
-  const [siteStyles, setSiteStyles] = useState<SiteStyles>({
-    primaryColor: 'blue',
-    fontFamily: 'sans',
-    roundedCorners: 'lg',
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>({
+    primaryColor: 'blue-600',
+    secondaryColor: 'green-500',
   });
-  const [smtpConfig, setSmtpConfig] = useState({ host: '', port: '', user: '', pass: '' }); // Simulated
-  const [adminDashboardSection, setAdminDashboardSection] = useState<string>('overview');
-  const [showPasswordChangePrompt, setShowPasswordChangePrompt] = useState<boolean>(false);
+   const [sftpConfig, setSftpConfig] = useState<SftpConfig>({ host: '', port: '22', user: '', pass: '' });
+  const [serverStatusData, setServerStatusData] = useState<{ online: boolean; players: number }>({ online: true, players: 42 });
+  const [showShop, setShowShop] = useState<boolean>(false); // Controlled by admin
 
-  // --- Form States ---
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [adminLoginEmail, setAdminLoginEmail] = useState('');
-  const [adminLoginPassword, setAdminLoginPassword] = useState('');
-  const [registerUsername, setRegisterUsername] = useState('');
-  const [registerEmail, setRegisterEmail] = useState('');
-  const [registerPassword, setRegisterPassword] = useState('');
-  const [newPostContent, setNewPostContent] = useState('');
-  const [newProfileUsername, setNewProfileUsername] = useState('');
-  const [newProfilePic, setNewProfilePic] = useState<File | null>(null); // Simulated upload
-  const [newBlogTitle, setNewBlogTitle] = useState('');
-  const [newBlogContent, setNewBlogContent] = useState('');
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [newAdminPassword, setNewAdminPassword] = useState('');
-  const [newAdminUsername, setNewAdminUsername] = useState('');
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-  const [newBadgeName, setNewBadgeName] = useState('');
-  const [newBadgeEmoji, setNewBadgeEmoji] = useState('');
-  const [newBadgeDesc, setNewBadgeDesc] = useState('');
-  const [editingBadge, setEditingBadge] = useState<Badge | null>(null);
-  const [editingAdmin, setEditingAdmin] = useState<AdminUser | null>(null);
-  const [newCommentText, setNewCommentText] = useState<{ [key: string]: string }>({}); // postId -> text
+  // UI/Form State
+  const [loginEmail, setLoginEmail] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [registerEmail, setRegisterEmail] = useState<string>('');
+  const [registerPassword, setRegisterPassword] = useState<string>('');
+  const [registerUsername, setRegisterUsername] = useState<string>('');
+  const [adminLoginEmail, setAdminLoginEmail] = useState<string>('');
+  const [adminLoginPassword, setAdminLoginPassword] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [successMessage, setSuccessMessage] = useState<string>('');
+  const [newPostContent, setNewPostContent] = useState<string>('');
+  const [newPostImage, setNewPostImage] = useState<File | null>(null);
+  const [newComment, setNewComment] = useState<{ [key: string]: string }>({}); // postId -> comment text
+  const [profileUsername, setProfileUsername] = useState<string>('');
+  const [profilePicFile, setProfilePicFile] = useState<File | null>(null);
+
+  // Admin Dashboard State
+  const [adminSection, setAdminSection] = useState<string>('dashboard'); // e.g., 'dashboard', 'content', 'styles', 'blogs', 'users', 'admins', 'settings', 'shop', 'badges'
+  const [newBlogTitle, setNewBlogTitle] = useState<string>('');
+  const [newBlogContent, setNewBlogContent] = useState<string>('');
+  const [editingContent, setEditingContent] = useState<string>('Some default editable content for the home page.'); // Example for direct content editing
+  const [tempPrimaryColor, setTempPrimaryColor] = useState<string>(siteSettings.primaryColor);
+  const [tempSecondaryColor, setTempSecondaryColor] = useState<string>(siteSettings.secondaryColor);
+  const [newAdminEmail, setNewAdminEmail] = useState<string>('');
+  const [newAdminPassword, setNewAdminPassword] = useState<string>('');
+  const [newAdminPermissions, setNewAdminPermissions] = useState<AdminPermission[]>([]);
+  const [editingAdminId, setEditingAdminId] = useState<string | null>(null);
+  const [newBadgeName, setNewBadgeName] = useState<string>('');
+  const [newBadgeEmoji, setNewBadgeEmoji] = useState<string>('');
+  const [newBadgeDesc, setNewBadgeDesc] = useState<string>('');
+  const [editingBadgeId, setEditingBadgeId] = useState<string | null>(null);
+  const [tempSftpConfig, setTempSftpConfig] = useState<SftpConfig>(sftpConfig);
+  const [newAdminPasswordConfirm, setNewAdminPasswordConfirm] = useState<string>(''); // For password change
+
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const profilePicInputRef = useRef<HTMLInputElement>(null);
 
   // --- Effects ---
+
+  // Handle initial routing based on hash
   useEffect(() => {
-    // Simulate routing based on hash
-    const handleHashChange = () => {
-      if (window.location.hash === '#adminlogin') {
-        setCurrentPage('adminLogin');
-      } else if (window.location.hash === '#login') {
-          setCurrentPage('login');
-      } else if (window.location.hash === '#register') {
-          setCurrentPage('register');
-      } else if (window.location.hash.startsWith('#blog/')) {
-          const postId = window.location.hash.split('/')[1];
-          // Find the post and set the page, or default to blog list
-          if (blogPosts.find(p => p.id === postId)) {
-              setCurrentPage(`blog/${postId}`);
-          } else {
-              setCurrentPage('blog');
-              window.location.hash = '#blog'; // Correct hash if post not found
-          }
-      } else if (window.location.hash === '#blog') {
-          setCurrentPage('blog');
-      } else if (window.location.hash === '#profile') {
-          setCurrentPage('profile');
-      } else if (window.location.hash === '#status') {
-          setCurrentPage('status');
-      } else if (window.location.hash === '#posts') {
-            setCurrentPage('posts');
+    const hash = window.location.hash;
+    if (hash === '#adminlogin') {
+      setCurrentPage('adminLogin');
+    } else {
+      // Clear hash if not admin login
+      if (hash) {
+         window.location.hash = '';
       }
-       else {
-        // Default to home if hash is unknown or empty
-        if (currentPage !== 'home' && !window.location.hash) {
-            setCurrentPage('home');
-        }
-      }
-    };
+      setCurrentPage('home'); // Default page
+    }
+    // Simulate fetching server status
+    const interval = setInterval(() => {
+        setServerStatusData(prev => ({
+            online: Math.random() > 0.1, // 90% chance online
+            players: prev.online ? Math.floor(Math.random() * 100) : 0
+        }));
+    }, 15000); // Update every 15 seconds
+    return () => clearInterval(interval);
+  }, []);
 
-    handleHashChange(); // Initial check
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [blogPosts, currentPage]); // Re-run if blogPosts change (for dynamic blog routing)
+  // Clear messages on page change
+  useEffect(() => {
+    setErrorMessage('');
+    setSuccessMessage('');
+  }, [currentPage, adminSection]);
 
+  // Update profile form when currentUser changes
+  useEffect(() => {
+    if (currentUser) {
+      setProfileUsername(currentUser.username);
+    }
+  }, [currentUser]);
 
   // --- Helper Functions ---
-  const getPrimaryColorClasses = (type: 'bg' | 'text' | 'border', intensity: number = 500): string => {
-    return `${type}-${siteStyles.primaryColor}-${intensity}`;
+
+  const generateId = (): string => `id_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  const getUserById = (id: string): User | undefined => users.find(u => u.id === id);
+  const getAdminById = (id: string): Admin | undefined => admins.find(a => a.id === id);
+  const getBadgeById = (id: string): Badge | undefined => badges.find(b => b.id === id);
+
+  const displayMessage = (msg: string, type: 'error' | 'success') => {
+    if (type === 'error') {
+      setErrorMessage(msg);
+      setSuccessMessage('');
+    } else {
+      setSuccessMessage(msg);
+      setErrorMessage('');
+    }
+    setTimeout(() => {
+      setErrorMessage('');
+      setSuccessMessage('');
+    }, 5000);
   };
 
-  const getFontFamilyClass = (): string => {
-    return `font-${siteStyles.fontFamily}`;
-  };
-
-   const getRoundedClass = (element?: 'button' | 'card' | 'input'): string => {
-        if(element === 'button' || element === 'input') return `rounded-${siteStyles.roundedCorners === 'none' ? 'none' : (siteStyles.roundedCorners === 'full' ? 'full' : 'md')}`;
-        return `rounded-${siteStyles.roundedCorners}`;
-    };
-
-  const findUserById = (id: string): User | AdminUser | undefined => {
-    return users.find(u => u.id === id) || adminUsers.find(u => u.id === id);
-  };
-
-  const isAdmin = (user: User | AdminUser | null): user is AdminUser => {
-    return user !== null && 'isAdmin' in user && user.isAdmin === true;
-  };
-
-  const hasPermission = (permission: string): boolean => {
-    return isAdmin(loggedInUser) && loggedInUser.permissions.includes(permission);
-  };
+  const hasPermission = (permission: AdminPermission): boolean => {
+      return !!currentAdmin && currentAdmin.permissions.includes(permission);
+  }
 
   // --- Event Handlers ---
 
-  const handleNavigation = (page: string, hash?: string) => {
+  const handleNavigate = (page: string) => {
+    // Prevent navigating away from admin login via UI elements
+    if (currentPage === 'adminLogin' && page !== 'adminLogin') return;
     setCurrentPage(page);
-    window.location.hash = hash || page;
+    window.location.hash = ''; // Clear hash on normal navigation
   };
 
-   const handleUserLogin = (e: FormEvent) => {
+  const handleLogin = (e: FormEvent) => {
     e.preventDefault();
-    const user = users.find(u => u.email === loginEmail); // Simplified login check
-    if (user /* && verifyPassword(loginPassword, user.passwordHash) */) {
-      // In a real app, verify password hash
-      if (!user.isVerified) {
-        alert('Please verify your email address.');
-        return;
-      }
-      setLoggedInUser(user);
-      handleNavigation('home');
-      setLoginEmail('');
-      setLoginPassword('');
+    const user = users.find(u => u.email === loginEmail);
+    // In a real app, you'd compare a hashed password
+    if (user && user.password === loginPassword) { // Simulate password check
+        if (!user.isVerified) {
+             displayMessage('Please verify your email before logging in.', 'error');
+             return;
+        }
+        setIsLoggedIn(true);
+        setCurrentUser(user);
+        setIsAdminLoggedIn(false); // Ensure admin is logged out
+        setCurrentAdmin(null);
+        displayMessage('Login successful!', 'success');
+        handleNavigate('home');
+        setLoginEmail('');
+        setLoginPassword('');
     } else {
-      alert('Invalid email or password.');
+      displayMessage('Invalid email or password.', 'error');
     }
   };
 
-    const handleAdminLogin = (e: FormEvent) => {
+   const handleRegister = (e: FormEvent) => {
         e.preventDefault();
-        const admin = adminUsers.find(u => u.email === adminLoginEmail); // Simplified login check
-        if (admin /* && verifyPassword(adminLoginPassword, admin.passwordHash) */) {
-            // In a real app, verify password hash
-            setLoggedInUser(admin);
-            if (!admin.passwordChanged && admin.email === 'admin@mmpcs.net') {
-                setShowPasswordChangePrompt(true);
-                setAdminDashboardSection('manageAdmins'); // Force to admin management
-            } else {
-                setShowPasswordChangePrompt(false);
-                setAdminDashboardSection('overview');
-            }
-            setCurrentPage('adminDashboard');
-             window.location.hash = ''; // Clear hash after successful admin login
-            setAdminLoginEmail('');
-            setAdminLoginPassword('');
-        } else {
-            alert('Invalid admin email or password.');
-        }
-    };
-
-   const handleLogout = () => {
-    setLoggedInUser(null);
-    setShowPasswordChangePrompt(false);
-    handleNavigation('home');
-  };
-
-  const handleRegister = (e: FormEvent) => {
-      e.preventDefault();
-      if (users.some(u => u.email === registerEmail) || adminUsers.some(u => u.email === registerEmail)) {
-          alert('Email already exists.');
-          return;
-      }
-      if (users.some(u => u.username === registerUsername) || adminUsers.some(u => u.username === registerUsername)) {
-          alert('Username already taken.');
-          return;
-      }
-      const newUser: User = {
-          id: generateId(),
-          username: registerUsername,
-          email: registerEmail,
-          isVerified: false, // Needs verification
-          badges: [],
-      };
-      setUsers([...users, newUser]);
-      // Simulate sending verification email
-      alert(`Registration successful! Please check ${registerEmail} for a verification link (simulation).`);
-      // In a real app, send email here using configured SMTP
-      setRegisterUsername('');
-      setRegisterEmail('');
-      setRegisterPassword('');
-      handleNavigation('login'); // Redirect to login page
-  };
-
-   // Simulate email verification
-   const handleVerifyEmail = (userId: string) => {
-       setUsers(prevUsers =>
-            prevUsers.map(u => u.id === userId ? { ...u, isVerified: true } : u)
-        );
-        alert('Email verified successfully! You can now log in.');
-        // Maybe auto-login or redirect to login
-   };
-
-  const handleUserPostSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!loggedInUser || newPostContent.trim() === '') return;
-    const newPost: UserPost = {
-      id: generateId(),
-      authorId: loggedInUser.id,
-      content: newPostContent,
-      createdAt: new Date(),
-      // mediaUrl would be handled by upload logic
-    };
-    setUserPosts([newPost, ...userPosts]);
-    setNewPostContent('');
-  };
-
-  const handleProfileUpdate = (e: FormEvent) => {
-      e.preventDefault();
-      if (!loggedInUser) return;
-
-      // Basic validation
-      if(newProfileUsername.trim() !== '' && (users.some(u => u.username === newProfileUsername && u.id !== loggedInUser.id) || adminUsers.some(a => a.username === newProfileUsername && a.id !== loggedInUser.id))) {
-          alert('Username already taken.');
-          return;
-      }
-
-      const updateProfile = (user: User | AdminUser): User | AdminUser => {
-          const updatedUser = { ...user };
-          if (newProfileUsername.trim() !== '') {
-              updatedUser.username = newProfileUsername.trim();
-          }
-          // Simulate profile pic upload - in reality, upload file and get URL
-          if (newProfilePic) {
-              updatedUser.profilePicUrl = URL.createObjectURL(newProfilePic); // Temporary local URL
-          }
-          return updatedUser;
-      };
-
-      if (isAdmin(loggedInUser)) {
-            setAdminUsers(prevAdmins =>
-                prevAdmins.map(u => u.id === loggedInUser.id ? updateProfile(u) as AdminUser : u)
-            );
-            setLoggedInUser(updateProfile(loggedInUser)); // Update loggedInUser state too
-        } else {
-            setUsers(prevUsers =>
-                prevUsers.map(u => u.id === loggedInUser.id ? updateProfile(u) as User : u)
-            );
-             setLoggedInUser(updateProfile(loggedInUser)); // Update loggedInUser state too
-        }
-
-
-      setNewProfileUsername('');
-      setNewProfilePic(null);
-      alert('Profile updated!');
-  };
-
-   const handleProfilePicChange = (e: ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setNewProfilePic(e.target.files[0]);
-        }
-    };
-
-  // --- Admin Dashboard Handlers ---
-
-   const handleAddBlog = (e: FormEvent) => {
-        e.preventDefault();
-        if (!hasPermission(PERMISSIONS.MANAGE_BLOGS) || !loggedInUser) return;
-        const newPost: BlogPost = {
-            id: generateId(),
-            title: newBlogTitle,
-            content: newBlogContent,
-            authorId: loggedInUser.id,
-            createdAt: new Date(),
-            comments: [],
-        };
-        setBlogPosts([newPost, ...blogPosts]);
-        setNewBlogTitle('');
-        setNewBlogContent('');
-    };
-
-    const handleDeleteBlog = (id: string) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_BLOGS)) return;
-        if (window.confirm('Are you sure you want to delete this blog post?')) {
-            setBlogPosts(blogPosts.filter(post => post.id !== id));
-        }
-    };
-
-   const handleStyleChange = (e: ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
-       if (!hasPermission(PERMISSIONS.MANAGE_STYLES)) return;
-       const { name, value } = e.target;
-       setSiteStyles(prev => ({ ...prev, [name]: value }));
-   };
-
-    const handleAddAdmin = (e: FormEvent) => {
-        e.preventDefault();
-        if (!hasPermission(PERMISSIONS.MANAGE_ADMINS)) return;
-         if (users.some(u => u.email === newAdminEmail) || adminUsers.some(u => u.email === newAdminEmail)) {
-            alert('Email already exists.');
+        if (users.some(u => u.email === registerEmail)) {
+            displayMessage('Email already exists.', 'error');
             return;
         }
-         if (users.some(u => u.username === newAdminUsername) || adminUsers.some(u => u.username === newAdminUsername)) {
-            alert('Username already taken.');
+        if (users.some(u => u.username === registerUsername)) {
+            displayMessage('Username already taken.', 'error');
             return;
         }
-
-        const newAdmin: AdminUser = {
+        const newUser: User = {
             id: generateId(),
-            username: newAdminUsername || `Admin_${generateId().substring(0,4)}`,
-            email: newAdminEmail,
-            isAdmin: true,
-            permissions: selectedPermissions,
-            passwordChanged: true, // New admins don't need forced change initially (or set false if you want)
-            isVerified: true, // Admins are auto-verified
+            email: registerEmail,
+            password: registerPassword, // Store temporarily for login simulation
+            username: registerUsername,
+            profilePic: null,
+            isVerified: false, // Requires verification
             badges: [],
-            // In real app, hash newAdminPassword
         };
-        setAdminUsers([...adminUsers, newAdmin]);
+        setUsers([...users, newUser]);
+        displayMessage('Registration successful! Please "verify" your email (click button below).', 'success');
+        setRegisterEmail('');
+        setRegisterPassword('');
+        setRegisterUsername('');
+        // In a real app, send verification email here. We'll simulate with a button.
+        handleNavigate('login'); // Go to login page after registration
+    };
+
+    // Simulate email verification
+    const handleVerifyEmail = (email: string) => {
+        setUsers(prevUsers => prevUsers.map(u => u.email === email ? { ...u, isVerified: true, password: undefined /* Clear simulated password */ } : u));
+        // Update current user if they just verified
+        if (currentUser?.email === email) {
+            setCurrentUser(prev => prev ? { ...prev, isVerified: true } : null);
+        }
+        displayMessage(`Email ${email} verified successfully! You can now log in.`, 'success');
+    };
+
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setCurrentUser(null);
+    handleNavigate('home');
+  };
+
+  const handleAdminLogin = (e: FormEvent) => {
+    e.preventDefault();
+    const admin = admins.find(a => a.email === adminLoginEmail);
+    // Simulate password check
+    if (admin && admin.password === adminLoginPassword) {
+        setIsAdminLoggedIn(true);
+        setCurrentAdmin(admin);
+        setIsLoggedIn(false); // Ensure user is logged out
+        setCurrentUser(null);
+        displayMessage('Admin login successful!', 'success');
+        setAdminLoginEmail('');
+        setAdminLoginPassword('');
+        if (admin.requiresPasswordChange) {
+            setAdminSection('admins'); // Force admin to change password
+            displayMessage('Security requirement: Please change your password or create a new admin account.', 'error');
+        } else {
+            setAdminSection('dashboard'); // Go to dashboard
+        }
+        setCurrentPage('adminDashboard'); // Navigate to admin dashboard page
+    } else {
+      displayMessage('Invalid admin email or password.', 'error');
+    }
+  };
+
+  const handleAdminLogout = () => {
+    setIsAdminLoggedIn(false);
+    setCurrentAdmin(null);
+    handleNavigate('home'); // Redirect to home page after admin logout
+  };
+
+  const handleCreateUserPost = (e: FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !newPostContent.trim()) return;
+
+    const newPost: UserPost = {
+        id: generateId(),
+        authorId: currentUser.id,
+        content: newPostContent,
+        // In a real app, upload image and get URL
+        imageUrl: newPostImage ? URL.createObjectURL(newPostImage) : undefined,
+        createdAt: new Date(),
+    };
+    setUserPosts([newPost, ...userPosts]); // Add to top
+    setNewPostContent('');
+    setNewPostImage(null);
+    if (fileInputRef.current) {
+        fileInputRef.current.value = ''; // Reset file input
+    }
+    displayMessage('Post created!', 'success');
+  };
+
+   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            setNewPostImage(e.target.files[0]);
+        }
+    };
+
+    const handleProfilePicChange = (e: ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            setProfilePicFile(e.target.files[0]);
+        }
+    };
+
+   const handleUpdateProfile = (e: FormEvent) => {
+        e.preventDefault();
+        if (!currentUser) return;
+
+        // Check if username is changing and if it's already taken
+        if (profileUsername !== currentUser.username && users.some(u => u.username === profileUsername && u.id !== currentUser.id)) {
+             displayMessage('Username already taken.', 'error');
+             return;
+        }
+
+        let picUrl = currentUser.profilePic;
+        if (profilePicFile) {
+            // Simulate upload and get URL
+            picUrl = URL.createObjectURL(profilePicFile);
+        }
+
+        const updatedUser: User = {
+            ...currentUser,
+            username: profileUsername,
+            profilePic: picUrl,
+        };
+
+        setCurrentUser(updatedUser);
+        setUsers(prevUsers => prevUsers.map(u => u.id === currentUser.id ? updatedUser : u));
+        setProfilePicFile(null); // Reset file input state
+        if (profilePicInputRef.current) {
+            profilePicInputRef.current.value = '';
+        }
+        displayMessage('Profile updated successfully!', 'success');
+    };
+
+    const handleAddComment = (postId: string) => {
+        if (!currentUser && !currentAdmin) {
+            displayMessage('You must be logged in to comment.', 'error');
+            return;
+        }
+        const commentContent = newComment[postId]?.trim();
+        if (!commentContent) return;
+
+        const authorIdentifier = currentAdmin ? 'admin' : (currentUser ? currentUser.id : 'unknown');
+        // Check blog comment permission if admin is commenting
+        if (currentAdmin && !hasPermission('moderateComments')) {
+             displayMessage('You do not have permission to comment on blogs.', 'error');
+             return;
+        }
+
+        const comment: Comment = {
+            id: generateId(),
+            postId: postId,
+            authorId: authorIdentifier,
+            content: commentContent,
+            createdAt: new Date(),
+        };
+
+        setBlogPosts(prevPosts => prevPosts.map(post =>
+            post.id === postId
+                ? { ...post, comments: [...post.comments, comment] }
+                : post
+        ));
+        setNewComment(prev => ({ ...prev, [postId]: '' })); // Clear input for this post
+        displayMessage('Comment added.', 'success');
+    };
+
+
+  // --- Admin Handlers ---
+
+  const handleAdminCreateBlog = (e: FormEvent) => {
+       e.preventDefault();
+       if (!hasPermission('manageBlogs')) return displayMessage('Permission denied.', 'error');
+       if (!newBlogTitle.trim() || !newBlogContent.trim()) return displayMessage('Title and content are required.', 'error');
+
+       const newPost: BlogPost = {
+           id: generateId(),
+           title: newBlogTitle,
+           content: newBlogContent,
+           authorId: currentUser?.id ?? 'adminlink', // Link to admin-linked user or default
+           createdAt: new Date(),
+           comments: [],
+       };
+       setBlogPosts([newPost, ...blogPosts]);
+       setNewBlogTitle('');
+       setNewBlogContent('');
+       setAdminSection('blogs'); // Go back to blog list
+       displayMessage('Blog post created.', 'success');
+   };
+
+  const handleAdminDeleteBlog = (id: string) => {
+       if (!hasPermission('manageBlogs')) return displayMessage('Permission denied.', 'error');
+       if (window.confirm('Are you sure you want to delete this blog post?')) {
+           setBlogPosts(prev => prev.filter(post => post.id !== id));
+           displayMessage('Blog post deleted.', 'success');
+       }
+   };
+
+   const handleAdminSaveChanges = () => {
+       if (adminSection === 'content' && hasPermission('manageContent')) {
+           // In a real app, save 'editingContent' somewhere specific
+           console.log("Simulating saving content:", editingContent);
+           displayMessage('Content changes saved (simulated).', 'success');
+       }
+       if (adminSection === 'styles' && hasPermission('manageStyles')) {
+           setSiteSettings({ primaryColor: tempPrimaryColor, secondaryColor: tempSecondaryColor });
+           displayMessage('Styles updated.', 'success');
+       }
+       if (adminSection === 'settings' && hasPermission('manageSettings')) {
+           setSftpConfig(tempSftpConfig);
+           // In a real app, validate and maybe test the connection
+           displayMessage('SFTP settings saved.', 'success');
+       }
+   };
+
+   const handleAdminToggleShop = () => {
+        if (!hasPermission('manageShop')) return displayMessage('Permission denied.', 'error');
+        setShowShop(prev => !prev);
+        displayMessage(`Shop page ${!showShop ? 'enabled' : 'disabled'}.`, 'success');
+    }
+
+   const handleAdminCreateAdmin = (e: FormEvent) => {
+        e.preventDefault();
+        if (!hasPermission('manageAdmins')) return displayMessage('Permission denied.', 'error');
+        if (!newAdminEmail || !newAdminPassword) return displayMessage('Email and password are required.', 'error');
+        if (admins.some(a => a.email === newAdminEmail)) return displayMessage('Admin email already exists.', 'error');
+
+        const newAdmin: Admin = {
+            id: generateId(),
+            email: newAdminEmail,
+            password: newAdminPassword, // Simulate storing password
+            permissions: newAdminPermissions,
+            requiresPasswordChange: false, // New admins don't require immediate change
+        };
+        setAdmins([...admins, newAdmin]);
+
+        // Link to existing user account if email matches
+        setUsers(prevUsers => prevUsers.map(u => u.email === newAdminEmail ? { ...u, isAdmin: true, badges: [...new Set([...u.badges, 'badge_admin'])] } : u));
+
         setNewAdminEmail('');
         setNewAdminPassword('');
-        setNewAdminUsername('');
-        setSelectedPermissions([]);
-        alert('New admin account created.');
+        setNewAdminPermissions([]);
+        displayMessage('New admin account created.', 'success');
+
+        // If the current admin was the default and just created a new one, clear the password change requirement
+        if (currentAdmin?.email === 'admin@mmpcs.net' && currentAdmin.requiresPasswordChange) {
+             setAdmins(prevAdmins => prevAdmins.map(a => a.id === currentAdmin.id ? { ...a, requiresPasswordChange: false, password: undefined /* Clear default password */ } : a));
+             setCurrentAdmin(prev => prev ? { ...prev, requiresPasswordChange: false } : null);
+        }
     };
 
-     const handleEditAdmin = (admin: AdminUser) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_ADMINS)) return;
-        setEditingAdmin(admin);
-        setNewAdminUsername(admin.username);
+   const handleAdminEditAdmin = (admin: Admin) => {
+        setEditingAdminId(admin.id);
         setNewAdminEmail(admin.email);
-        setSelectedPermissions(admin.permissions);
-        setNewAdminPassword(''); // Clear password field for editing
-         setAdminDashboardSection('manageAdmins'); // Ensure the section is visible
-    };
+        setNewAdminPermissions([...admin.permissions]);
+        // Do not preload password for editing
+        setNewAdminPassword('');
+        setNewAdminPasswordConfirm(''); // Clear confirm field too
+        setAdminSection('admins_edit'); // Go to a dedicated edit view
+   };
 
-     const handleUpdateAdmin = (e: FormEvent) => {
+   const handleAdminUpdateAdmin = (e: FormEvent) => {
         e.preventDefault();
-         if (!hasPermission(PERMISSIONS.MANAGE_ADMINS) || !editingAdmin) return;
+        if (!editingAdminId || !hasPermission('manageAdmins')) return displayMessage('Permission denied.', 'error');
+        const adminToUpdate = admins.find(a => a.id === editingAdminId);
+        if (!adminToUpdate) return displayMessage('Admin not found.', 'error');
 
-         // Check for email/username conflicts excluding the current admin being edited
-          if (users.some(u => u.email === newAdminEmail) || adminUsers.some(u => u.email === newAdminEmail && u.id !== editingAdmin.id)) {
-            alert('Email already exists.');
-            return;
+        // Prevent changing the email of the default admin for safety in this simulation
+        if (adminToUpdate.email === 'admin@mmpcs.net' && newAdminEmail !== 'admin@mmpcs.net') {
+            return displayMessage('Cannot change the email of the default admin account.', 'error');
         }
-         if (users.some(u => u.username === newAdminUsername) || adminUsers.some(a => a.username === newAdminUsername && a.id !== editingAdmin.id)) {
-            alert('Username already taken.');
-            return;
+        // Check if new email is already taken by another admin
+        if (newAdminEmail !== adminToUpdate.email && admins.some(a => a.email === newAdminEmail && a.id !== editingAdminId)) {
+             return displayMessage('Admin email already exists.', 'error');
         }
 
+        let updatedPassword = adminToUpdate.password; // Keep old if not changed
+        let requiresPwdChange = adminToUpdate.requiresPasswordChange;
 
-        setAdminUsers(prevAdmins => prevAdmins.map(admin => {
-            if (admin.id === editingAdmin.id) {
-                const updatedAdmin: AdminUser = {
-                    ...admin,
-                    username: newAdminUsername || admin.username,
-                    email: newAdminEmail || admin.email,
-                    permissions: selectedPermissions,
-                     // Only update password if a new one is entered
-                    passwordChanged: newAdminPassword ? true : admin.passwordChanged,
-                    // Add logic here to hash newAdminPassword if provided
-                };
-                 // Special handling for the default admin password change
-                if(admin.email === 'admin@mmpcs.net' && !admin.passwordChanged && newAdminPassword) {
-                    updatedAdmin.passwordChanged = true;
-                }
-
-                 // If the currently logged-in admin is editing themselves, update the loggedInUser state
-                 if (loggedInUser?.id === admin.id) {
-                     setLoggedInUser(updatedAdmin);
-                 }
-                  // Reset password prompt if the default admin password was changed
-                 if(loggedInUser?.id === admin.id && admin.email === 'admin@mmpcs.net' && updatedAdmin.passwordChanged && showPasswordChangePrompt){
-                    setShowPasswordChangePrompt(false);
-                 }
-
-                return updatedAdmin;
+        if (newAdminPassword) {
+            if (newAdminPassword !== newAdminPasswordConfirm) {
+                return displayMessage('New passwords do not match.', 'error');
             }
-            return admin;
+            updatedPassword = newAdminPassword; // Update simulated password
+            // If the admin being edited is the current logged-in admin changing their own password
+            if (currentAdmin?.id === editingAdminId && adminToUpdate.requiresPasswordChange) {
+                requiresPwdChange = false; // Clear the flag after successful change
+            }
+        }
+
+        const updatedAdmin: Admin = {
+            ...adminToUpdate,
+            email: newAdminEmail,
+            password: updatedPassword,
+            permissions: newAdminPermissions,
+            requiresPasswordChange: requiresPwdChange,
+        };
+
+        setAdmins(prevAdmins => prevAdmins.map(a => a.id === editingAdminId ? updatedAdmin : a));
+
+        // Update admin link status on associated user accounts
+        setUsers(prevUsers => prevUsers.map(u => {
+            if (u.email === adminToUpdate.email && u.email !== newAdminEmail) { // Email changed, remove admin status
+                return { ...u, isAdmin: false, badges: u.badges.filter(bId => bId !== 'badge_admin') };
+            }
+            if (u.email === newAdminEmail) { // New email matches a user, add admin status
+                 return { ...u, isAdmin: true, badges: [...new Set([...u.badges, 'badge_admin'])] };
+            }
+            return u;
         }));
 
+        // If the current admin updated their own info
+        if (currentAdmin?.id === editingAdminId) {
+            setCurrentAdmin(updatedAdmin);
+        }
 
-        setEditingAdmin(null);
+        displayMessage('Admin account updated.', 'success');
+        setEditingAdminId(null);
         setNewAdminEmail('');
         setNewAdminPassword('');
-        setNewAdminUsername('');
-        setSelectedPermissions([]);
-        alert('Admin account updated.');
-    };
+        setNewAdminPasswordConfirm('');
+        setNewAdminPermissions([]);
+        setAdminSection('admins'); // Go back to list
+   };
 
-     const handleDeleteAdmin = (id: string) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_ADMINS)) return;
-        // Prevent deleting the last admin or the default admin if password not changed
-        const adminToDelete = adminUsers.find(a => a.id === id);
-        if(adminToDelete?.email === 'admin@mmpcs.net' && !adminToDelete.passwordChanged){
-            alert('Cannot delete the default admin until the password is changed.');
-            return;
-        }
-        if (adminUsers.length <= 1) {
-            alert('Cannot delete the last admin account.');
-            return;
-        }
-        if (loggedInUser?.id === id) {
-            alert('Cannot delete your own account.');
-            return;
-        }
-        if (window.confirm('Are you sure you want to delete this admin account?')) {
-            setAdminUsers(adminUsers.filter(admin => admin.id !== id));
-        }
-    };
 
-     const handleTogglePermission = (permission: string) => {
-        setSelectedPermissions(prev =>
-            prev.includes(permission)
-                ? prev.filter(p => p !== permission)
-                : [...prev, permission]
-        );
-    };
+   const handleAdminDeleteAdmin = (id: string) => {
+       if (!hasPermission('manageAdmins')) return displayMessage('Permission denied.', 'error');
+       const adminToDelete = admins.find(a => a.id === id);
+       if (!adminToDelete) return;
+       // Prevent deleting the last admin or the default admin in this simulation
+       if (admins.length <= 1) {
+            return displayMessage('Cannot delete the last admin account.', 'error');
+       }
+       if (adminToDelete.email === 'admin@mmpcs.net') {
+            return displayMessage('Cannot delete the default admin account.', 'error');
+       }
+       if (window.confirm(`Are you sure you want to delete admin ${adminToDelete.email}?`)) {
+           setAdmins(prev => prev.filter(admin => admin.id !== id));
+           // Remove admin status from linked user
+            setUsers(prevUsers => prevUsers.map(u => u.email === adminToDelete.email ? { ...u, isAdmin: false, badges: u.badges.filter(bId => bId !== 'badge_admin') } : u));
+           displayMessage('Admin account deleted.', 'success');
+       }
+   };
 
-    const handleAddBadge = (e: FormEvent) => {
+   const handlePermissionChange = (permission: AdminPermission, checked: boolean) => {
+       setNewAdminPermissions(prev =>
+           checked
+               ? [...prev, permission]
+               : prev.filter(p => p !== permission)
+       );
+   };
+
+    const handleAdminCreateBadge = (e: FormEvent) => {
         e.preventDefault();
-        if (!hasPermission(PERMISSIONS.MANAGE_BADGES)) return;
+        if (!hasPermission('manageBadges')) return displayMessage('Permission denied.', 'error');
+        if (!newBadgeName.trim() || !newBadgeEmoji) return displayMessage('Badge name and emoji are required.', 'error');
+
         const newBadge: Badge = {
             id: generateId(),
             name: newBadgeName,
@@ -521,1359 +612,1223 @@ const MinecraftWebsite: React.FC = () => {
         setNewBadgeName('');
         setNewBadgeEmoji('');
         setNewBadgeDesc('');
+        displayMessage('Badge created.', 'success');
     };
 
-    const handleEditBadge = (badge: Badge) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_BADGES)) return;
-        setEditingBadge(badge);
+    const handleAdminEditBadge = (badge: Badge) => {
+        setEditingBadgeId(badge.id);
         setNewBadgeName(badge.name);
         setNewBadgeEmoji(badge.emoji);
         setNewBadgeDesc(badge.description);
-         setAdminDashboardSection('manageBadges'); // Ensure section is visible
+        setAdminSection('badges_edit');
     };
 
-    const handleUpdateBadge = (e: FormEvent) => {
+    const handleAdminUpdateBadge = (e: FormEvent) => {
         e.preventDefault();
-        if (!hasPermission(PERMISSIONS.MANAGE_BADGES) || !editingBadge) return;
-        setBadges(prevBadges => prevBadges.map(b =>
-            b.id === editingBadge.id
-                ? { ...b, name: newBadgeName, emoji: newBadgeEmoji, description: newBadgeDesc }
-                : b
-        ));
-        setEditingBadge(null);
+        if (!editingBadgeId || !hasPermission('manageBadges')) return displayMessage('Permission denied.', 'error');
+        if (!newBadgeName.trim() || !newBadgeEmoji) return displayMessage('Badge name and emoji are required.', 'error');
+
+        const updatedBadge: Badge = {
+            id: editingBadgeId,
+            name: newBadgeName,
+            emoji: newBadgeEmoji,
+            description: newBadgeDesc,
+        };
+
+        setBadges(prev => prev.map(b => b.id === editingBadgeId ? updatedBadge : b));
+        displayMessage('Badge updated.', 'success');
+        setEditingBadgeId(null);
         setNewBadgeName('');
         setNewBadgeEmoji('');
         setNewBadgeDesc('');
+        setAdminSection('badges');
     };
 
-    const handleDeleteBadge = (id: string) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_BADGES)) return;
+    const handleAdminDeleteBadge = (id: string) => {
+        if (!hasPermission('manageBadges')) return displayMessage('Permission denied.', 'error');
+         if (id === 'badge_admin') return displayMessage('Cannot delete the default Admin badge.', 'error'); // Protect default admin badge
         if (window.confirm('Are you sure you want to delete this badge? This will remove it from all users.')) {
-             setBadges(badges.filter(badge => badge.id !== id));
-             // Also remove the badge from users
-            const updateUserBadges = (userList: (User|AdminUser)[]) => userList.map(u => ({
+            setBadges(prev => prev.filter(b => b.id !== id));
+            // Remove badge from all users
+            setUsers(prevUsers => prevUsers.map(u => ({
                 ...u,
                 badges: u.badges.filter(bId => bId !== id)
-            }));
-            setUsers(updateUserBadges(users) as User[]);
-            setAdminUsers(updateUserBadges(adminUsers) as AdminUser[]);
-             // Update loggedInUser if needed
-            if(loggedInUser && loggedInUser.badges.includes(id)){
-                setLoggedInUser({...loggedInUser, badges: loggedInUser.badges.filter(bId => bId !== id)});
+            })));
+            displayMessage('Badge deleted.', 'success');
+            // If currently editing this badge, go back
+            if (editingBadgeId === id) {
+                setEditingBadgeId(null);
+                setNewBadgeName('');
+                setNewBadgeEmoji('');
+                setNewBadgeDesc('');
+                setAdminSection('badges');
             }
         }
     };
 
-     const handleSmtpConfigChange = (e: ChangeEvent<HTMLInputElement>) => {
-        if (!hasPermission(PERMISSIONS.CONFIGURE_SYSTEM)) return;
-        const { name, value } = e.target;
-        setSmtpConfig(prev => ({ ...prev, [name]: value }));
-    };
+     const handleAdminAssignBadge = (userId: string, badgeId: string) => {
+        if (!hasPermission('manageUsers')) return displayMessage('Permission denied.', 'error');
+         setUsers(prevUsers => prevUsers.map(u => u.id === userId ? { ...u, badges: [...new Set([...u.badges, badgeId])] } : u));
+         displayMessage('Badge assigned.', 'success');
+     }
 
-     const handleSaveSmtpConfig = (e: FormEvent) => {
-        e.preventDefault();
-         if (!hasPermission(PERMISSIONS.CONFIGURE_SYSTEM)) return;
-         // In a real app, save this securely to backend config
-         console.log("SMTP Config Saved (Simulated):", smtpConfig);
-         alert('SMTP configuration saved (simulation).');
-    };
+     const handleAdminRemoveBadge = (userId: string, badgeId: string) => {
+         if (!hasPermission('manageUsers')) return displayMessage('Permission denied.', 'error');
+         if (badgeId === 'badge_admin' && users.find(u=>u.id === userId)?.isAdmin) return displayMessage('Remove admin status via Admin Management to remove this badge.', 'error');
+          setUsers(prevUsers => prevUsers.map(u => u.id === userId ? { ...u, badges: u.badges.filter(b => b !== badgeId) } : u));
+         displayMessage('Badge removed.', 'success');
+     }
 
-     const handleAssignBadge = (userId: string, badgeId: string) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_USERS)) return;
 
-        const assignToUser = (userList: (User|AdminUser)[]) => userList.map(u => {
-            if (u.id === userId && !u.badges.includes(badgeId)) {
-                return { ...u, badges: [...u.badges, badgeId] };
-            }
-            return u;
-        });
-
-        setUsers(assignToUser(users) as User[]);
-        setAdminUsers(assignToUser(adminUsers) as AdminUser[]);
-          // Update loggedInUser if needed
-         if(loggedInUser?.id === userId && !loggedInUser.badges.includes(badgeId)){
-             setLoggedInUser({...loggedInUser, badges: [...loggedInUser.badges, badgeId]});
-         }
-    };
-
-    const handleRemoveBadge = (userId: string, badgeId: string) => {
-        if (!hasPermission(PERMISSIONS.MANAGE_USERS)) return;
-
-         const removeFromUser = (userList: (User|AdminUser)[]) => userList.map(u => {
-            if (u.id === userId) {
-                return { ...u, badges: u.badges.filter(b => b !== badgeId) };
-            }
-            return u;
-        });
-
-        setUsers(removeFromUser(users) as User[]);
-        setAdminUsers(removeFromUser(adminUsers) as AdminUser[]);
-         // Update loggedInUser if needed
-         if(loggedInUser?.id === userId){
-             setLoggedInUser({...loggedInUser, badges: loggedInUser.badges.filter(b => b !== badgeId)});
-         }
-    };
-
-    const handleLinkAdminAccount = (adminId: string, targetUserId: string | '') => {
-         if (!hasPermission(PERMISSIONS.MANAGE_USERS)) return;
-         setAdminUsers(prevAdmins => prevAdmins.map(admin => {
-             if (admin.id === adminId) {
-                 return { ...admin, linkedUserId: targetUserId === '' ? undefined : targetUserId };
-             }
-             return admin;
-         }));
-          // Update loggedInUser if they are the admin being linked/unlinked
-         if(loggedInUser?.id === adminId){
-             setLoggedInUser({...loggedInUser, linkedUserId: targetUserId === '' ? undefined : targetUserId} as AdminUser)
-         }
-    };
-
-     const handleAddComment = (postId: string) => {
-        if (!loggedInUser || !newCommentText[postId]?.trim()) return;
-
-        const newComment: Comment = {
-            id: generateId(),
-            postId: postId,
-            authorId: loggedInUser.id,
-            text: newCommentText[postId].trim(),
-            createdAt: new Date(),
-        };
-
-        setBlogPosts(prevPosts => prevPosts.map(post => {
-            if (post.id === postId) {
-                return { ...post, comments: [...post.comments, newComment] };
-            }
-            return post;
-        }));
-
-        // Clear comment input for that post
-        setNewCommentText(prev => ({ ...prev, [postId]: '' }));
-    };
-
-  // --- Rendering ---
+  // --- Render Functions ---
 
   const renderNavbar = () => (
-    <nav className={`p-4 shadow-md ${getPrimaryColorClasses('bg', 600)} text-white ${getFontFamilyClass()}`}>
-      <div className="container mx-auto flex justify-between items-center">
-        <div className={`text-2xl font-bold cursor-pointer`} onClick={() => handleNavigation('home')}>
-          Minecraft Server
-        </div>
-        <div className="space-x-4 flex items-center">
-          <a href="#home" onClick={(e) => { e.preventDefault(); handleNavigation('home'); }} className="hover:text-gray-200">Home</a>
-          <a href="#blog" onClick={(e) => { e.preventDefault(); handleNavigation('blog'); }} className="hover:text-gray-200">Blog</a>
-          <a href="#posts" onClick={(e) => { e.preventDefault(); handleNavigation('posts'); }} className="hover:text-gray-200">User Posts</a>
-          <a href="#status" onClick={(e) => { e.preventDefault(); handleNavigation('status'); }} className="hover:text-gray-200">Server Status</a>
-          {isAdmin(loggedInUser) && hasPermission(PERMISSIONS.VIEW_SHOP) && (
-              <a href="#shop" onClick={(e) => { e.preventDefault(); handleNavigation('shop'); }} className="hover:text-gray-200">Shop (Admin View)</a>
-          )}
-          {loggedInUser ? (
-            <>
-              <div className="flex items-center space-x-2">
-                  {loggedInUser.profilePicUrl ? (
-                      <img src={loggedInUser.profilePicUrl} alt="Profile" className={`w-8 h-8 rounded-full ${getRoundedClass()}`} />
-                  ) : (
-                     <div className={`bg-gray-300 border-2 border-dashed ${getRoundedClass('button')} w-8 h-8 flex items-center justify-center text-sm text-gray-600`}>
-                        {loggedInUser.username.substring(0,1)}
+    <nav className={`bg-${siteSettings.primaryColor} p-4 text-white flex justify-between items-center shadow-md`}>
+      <div className="flex items-center space-x-4">
+        <button onClick={() => handleNavigate('home')} className="text-xl font-bold hover:text-gray-200">Minecraft Server</button>
+        <button onClick={() => handleNavigate('blog')} className="hover:text-gray-200">Blog</button>
+        <button onClick={() => handleNavigate('serverStatus')} className="hover:text-gray-200">Server Status</button>
+         {isLoggedIn && (
+             <button onClick={() => handleNavigate('userPosts')} className="hover:text-gray-200">Community</button>
+         )}
+      </div>
+      <div className="flex items-center space-x-4">
+        {isLoggedIn && currentUser ? (
+          <>
+            <button onClick={() => handleNavigate('profile')} className="flex items-center space-x-2 hover:text-gray-200">
+                {currentUser.profilePic ? (
+                     <img src={currentUser.profilePic} alt={currentUser.username} className="w-8 h-8 rounded-full object-cover border-2 border-white"/>
+                ) : (
+                    <div className="bg-gray-400 border-2 border-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-semibold">
+                        {currentUser.username.charAt(0).toUpperCase()}
                     </div>
-                  )}
-                <a href="#profile" onClick={(e) => { e.preventDefault(); handleNavigation('profile'); }} className="hover:text-gray-200">{loggedInUser.username}</a>
-                {isAdmin(loggedInUser) && <span className={`px-2 py-0.5 text-xs ${getPrimaryColorClasses('bg', 800)} rounded-full`}>Admin</span>}
-                 {renderUserBadges(loggedInUser, 'inline-flex')}
-              </div>
-              <button
-                onClick={handleLogout}
-                className={`px-3 py-1 bg-red-500 hover:bg-red-600 text-white ${getRoundedClass('button')}`}
-              >
-                Logout
-              </button>
-              {isAdmin(loggedInUser) && (
-                 <button
-                    onClick={() => setCurrentPage('adminDashboard')}
-                    className={`px-3 py-1 ${getPrimaryColorClasses('bg', 700)} hover:${getPrimaryColorClasses('bg', 800)} text-white ${getRoundedClass('button')}`}
-                 >
-                    Admin Dashboard
-                 </button>
-              )}
-            </>
-          ) : (
-            <>
-              <a href="#login" onClick={(e) => { e.preventDefault(); handleNavigation('login'); }} className={`px-3 py-1 ${getPrimaryColorClasses('bg', 500)} hover:${getPrimaryColorClasses('bg', 700)} text-white ${getRoundedClass('button')}`}>Login</a>
-               <a href="#register" onClick={(e) => { e.preventDefault(); handleNavigation('register'); }} className={`px-3 py-1 bg-gray-500 hover:bg-gray-600 text-white ${getRoundedClass('button')}`}>Register</a>
-            </>
-          )}
-        </div>
+                )}
+              <span>{currentUser.username}</span>
+               {currentUser.isAdmin && <span title="Linked Admin Account" className="text-yellow-300 text-xs">(Admin)</span>}
+            </button>
+            <button onClick={handleLogout} className={`bg-${siteSettings.secondaryColor} hover:bg-opacity-80 text-white px-3 py-1 rounded`}>Logout</button>
+          </>
+        ) : isAdminLoggedIn ? (
+            <span className="text-yellow-300 font-semibold">Admin Mode</span>
+            // No user login button when admin is logged in
+        ) : (
+          <>
+            <button onClick={() => handleNavigate('login')} className="hover:text-gray-200">Login</button>
+            <button onClick={() => handleNavigate('register')} className={`bg-${siteSettings.secondaryColor} hover:bg-opacity-80 text-white px-3 py-1 rounded`}>Register</button>
+          </>
+        )}
       </div>
     </nav>
   );
 
-  const renderUserBadges = (user: User | AdminUser, displayClass: string = 'flex') => {
-    const admin = adminUsers.find(a => a.id === user.id);
-    const linkedUser = admin?.linkedUserId ? users.find(u => u.id === admin.linkedUserId) : null;
-    const isLinkedAdminOnUserView = !isAdmin(user) && adminUsers.some(a => a.linkedUserId === user.id);
+  const renderFooter = () => (
+    <footer className="bg-gray-800 text-gray-400 p-4 mt-12 text-center text-sm">
+      © {new Date().getFullYear()} Minecraft Server. All rights reserved.
+      {/* Admin login link is not rendered, must be typed manually */}
+    </footer>
+  );
 
-    const allBadgeIds = new Set([...user.badges, ...(linkedUser?.badges ?? [])]);
-
-    if (isLinkedAdminOnUserView){
-         const adminBadge : Badge = {id: 'admin-link-badge', name: 'Admin', emoji: '🛡️', description: 'Linked Admin Account'};
-         return (
-             <span className={`${displayClass} items-center gap-1 ml-1`}>
-                 <span title={adminBadge.description} className="cursor-default">{adminBadge.emoji}</span>
-             </span>
-         );
-    }
-
-    return (
-      <span className={`${displayClass} items-center gap-1 ml-1`}>
-        {Array.from(allBadgeIds).map(badgeId => {
-          const badge = badges.find(b => b.id === badgeId);
-          return badge ? (
-            <span key={badge.id} title={badge.name + ': ' + badge.description} className="cursor-default">{badge.emoji}</span>
-          ) : null;
-        })}
-      </span>
-    );
-  };
-
-   const renderUserProfile = (user: User | AdminUser) => {
-       const author = findUserById(user.id);
-       if (!author) return <span className="italic text-gray-500">Unknown User</span>;
-
-       return (
-           <div className="flex items-center space-x-2">
-                {author.profilePicUrl ? (
-                    <img src={author.profilePicUrl} alt={author.username} className={`w-8 h-8 ${getRoundedClass('full')} object-cover`} />
-                 ) : (
-                    <div className={`bg-gray-300 border-2 border-dashed ${getRoundedClass('full')} w-8 h-8 flex items-center justify-center text-sm text-gray-600`}>
-                        {author.username.substring(0,1)}
-                    </div>
-                 )}
-                <span className="font-semibold">{author.username}</span>
-                {renderUserBadges(author)}
-            </div>
-       );
-   };
-
-   const renderCommentAuthor = (comment: Comment) => {
-        const author = findUserById(comment.authorId);
-        if (!author) return <span className="italic text-gray-500">Unknown User</span>;
-
-        // Check if author is an admin with comment permission
-        const authorIsAdmin = isAdmin(author);
-        const canCommentAsAdmin = authorIsAdmin && author.permissions.includes(PERMISSIONS.COMMENT_AS_ADMIN);
-
-        if (canCommentAsAdmin) {
-             return (
-                 <div className="flex items-center space-x-2">
-                    <span className={`font-semibold px-2 py-0.5 text-sm ${getPrimaryColorClasses('bg', 600)} text-white rounded-md`}>Admin</span>
+    const renderMessages = () => (
+        <>
+            {errorMessage && (
+                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                    {errorMessage}
                 </div>
-            );
-        }
-
-       // Render normal user profile
-       return renderUserProfile(author);
-   };
-
+            )}
+            {successMessage && (
+                <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+                    {successMessage}
+                </div>
+            )}
+        </>
+    );
 
   const renderHomePage = () => (
-    <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-      <h1 className="text-4xl font-bold mb-4">Welcome to Our Minecraft Server!</h1>
-      <p className="text-lg text-gray-700 mb-6">
-        Join our community and start your adventure today. Explore vast lands, build amazing creations, and make new friends!
-        This content can be changed from the admin dashboard.
-      </p>
-      <div className={`p-6 bg-white border ${getRoundedClass('card')} shadow-md`}>
-         <h2 className="text-2xl font-semibold mb-3">Server Features</h2>
-         <ul className="list-disc list-inside space-y-2 text-gray-600">
-            <li>Survival Mode with Land Claiming</li>
-            <li>Creative World for Builders</li>
-            <li>Minigames and Events</li>
-            <li>Friendly Community and Staff</li>
-            <li>Regular Updates</li>
-         </ul>
-      </div>
-    </div>
-  );
-
-  const renderBlogPage = () => {
-      const parts = currentPage.split('/');
-      const postId = parts.length > 1 ? parts[1] : null;
-
-      if(postId){
-          const post = blogPosts.find(p => p.id === postId);
-          if(!post) return <div className="container mx-auto p-6 text-red-500">Blog post not found. <a href="#blog" onClick={(e) => {e.preventDefault(); handleNavigation('blog')}} className="underline">Return to Blog List</a></div>;
-
-          const author = findUserById(post.authorId);
-
-          return (
-              <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-                  <a href="#blog" onClick={(e) => {e.preventDefault(); handleNavigation('blog')}} className={`text-${siteStyles.primaryColor}-600 hover:underline mb-4 inline-block`}>&larr; Back to Blog</a>
-                  <article className={`p-6 bg-white border ${getRoundedClass('card')} shadow-md`}>
-                      <h1 className="text-3xl font-bold mb-2">{post.title}</h1>
-                      <div className="text-sm text-gray-500 mb-4">
-                          Posted by {author ? renderUserProfile(author) : 'Unknown'} on {post.createdAt.toLocaleDateString()}
-                      </div>
-                      <div className="prose max-w-none text-gray-800">
-                         {/* In a real app, sanitize this content or use Markdown */}
-                         <p>{post.content}</p>
-                      </div>
-
-                      {/* Comments Section */}
-                       <div className="mt-8 border-t pt-6">
-                            <h3 className="text-xl font-semibold mb-4">Comments ({post.comments.length})</h3>
-                             {post.comments.length === 0 ? (
-                                <p className="text-gray-500 italic">No comments yet.</p>
-                            ) : (
-                                <div className="space-y-4">
-                                    {post.comments.slice().sort((a,b) => a.createdAt.getTime() - b.createdAt.getTime()).map(comment => (
-                                        <div key={comment.id} className={`p-3 bg-gray-50 border ${getRoundedClass('md')}`}>
-                                           <div className="flex justify-between items-center mb-1">
-                                                {renderCommentAuthor(comment)}
-                                                <span className="text-xs text-gray-400">{comment.createdAt.toLocaleString()}</span>
-                                           </div>
-                                            <p className="text-gray-700">{comment.text}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {/* Add Comment Form */}
-                            {loggedInUser && (
-                                <form onSubmit={(e) => { e.preventDefault(); handleAddComment(post.id); }} className="mt-6">
-                                    <h4 className="text-lg font-medium mb-2">Leave a Comment</h4>
-                                    <textarea
-                                        value={newCommentText[post.id] || ''}
-                                        onChange={(e) => setNewCommentText(prev => ({...prev, [post.id]: e.target.value}))}
-                                        placeholder="Write your comment..."
-                                        rows={3}
-                                        className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                                        required
-                                    ></textarea>
-                                    <button
-                                        type="submit"
-                                        className={`mt-2 px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-                                    >
-                                        Post Comment
-                                    </button>
-                                </form>
-                            )}
-                             {!loggedInUser && (
-                                <p className="mt-6 text-gray-600">
-                                    <a href="#login" onClick={(e) => { e.preventDefault(); handleNavigation('login'); }} className={`text-${siteStyles.primaryColor}-600 hover:underline font-medium`}>Log in</a> to leave a comment.
-                                </p>
-                            )}
-                       </div>
-                  </article>
-              </div>
-          );
-      }
-
-      // Blog List View
-      return (
-        <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-          <h1 className="text-3xl font-bold mb-6">Blog</h1>
-          <div className="space-y-6">
-            {blogPosts.length > 0 ? blogPosts.slice().sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime()).map(post => {
-                 const author = findUserById(post.authorId);
-                return (
-                    <div key={post.id} className={`p-6 bg-white border ${getRoundedClass('card')} shadow-md hover:shadow-lg transition-shadow`}>
-                        <h2 className="text-2xl font-semibold mb-2">
-                         <a href={`#blog/${post.id}`} onClick={(e) => {e.preventDefault(); handleNavigation(`blog/${post.id}`)}} className={`hover:text-${siteStyles.primaryColor}-700`}>
-                            {post.title}
-                         </a>
-                        </h2>
-                        <div className="text-sm text-gray-500 mb-3">
-                             Posted by {author ? renderUserProfile(author) : 'Unknown'} on {post.createdAt.toLocaleDateString()}
-                        </div>
-                        <p className="text-gray-700 mb-4 truncate">{post.content}</p>
-                         <a href={`#blog/${post.id}`} onClick={(e) => {e.preventDefault(); handleNavigation(`blog/${post.id}`)}} className={`text-${siteStyles.primaryColor}-600 hover:underline font-medium`}>
-                            Read More &rarr;
-                        </a>
-                    </div>
-                );
-            }) : <p>No blog posts yet.</p>}
-          </div>
+    <div className="space-y-6">
+      <h1 className="text-4xl font-bold">Welcome to Our Minecraft Server!</h1>
+       {/* Example of using admin-editable content */}
+      <p className="text-lg text-gray-700">{editingContent}</p>
+      <div className="grid md:grid-cols-2 gap-6">
+        <div className={`bg-white p-6 rounded-lg shadow-md border-l-4 border-${siteSettings.primaryColor}`}>
+            <h2 className="text-2xl font-semibold mb-3">Join Us!</h2>
+            <p className="mb-4">Server IP: <span className="font-mono bg-gray-200 px-2 py-1 rounded">play.yourserver.com</span></p>
+            <p>Connect with Minecraft Java Edition version X.Y.Z.</p>
         </div>
-      );
-  };
-
-  const renderUserPostsPage = () => (
-    <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-      <h1 className="text-3xl font-bold mb-6">User Posts</h1>
-
-      {loggedInUser && (
-        <form onSubmit={handleUserPostSubmit} className={`mb-8 p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-          <h2 className="text-xl font-semibold mb-3">Create a Post</h2>
-          <textarea
-            value={newPostContent}
-            onChange={(e) => setNewPostContent(e.target.value)}
-            placeholder="What's on your mind?"
-            rows={3}
-            className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500 mb-2`}
-            required
-          ></textarea>
-           {/* Basic file input simulation */}
-          <label className="block mb-2 text-sm font-medium text-gray-700">Upload Image/Media (Optional):
-             <input type="file" accept="image/*,video/*" className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 mt-1"/>
-           </label>
-          <button
-            type="submit"
-            className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-          >
-            Post
-          </button>
-        </form>
-      )}
-       {!loggedInUser && (
-           <p className="mb-8 text-gray-600">
-                <a href="#login" onClick={(e) => { e.preventDefault(); handleNavigation('login'); }} className={`text-${siteStyles.primaryColor}-600 hover:underline font-medium`}>Log in</a> to create posts.
-            </p>
-       )}
-
-      <div className="space-y-6">
-        {userPosts.length > 0 ? userPosts.slice().sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime()).map(post => {
-          const author = findUserById(post.authorId);
-          return (
-            <div key={post.id} className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-              <div className="flex justify-between items-start mb-2">
-                 {author ? renderUserProfile(author) : <span className="italic text-gray-500">Unknown User</span>}
-                <span className="text-xs text-gray-400">{post.createdAt.toLocaleString()}</span>
-              </div>
-              <p className="text-gray-800 mb-2">{post.content}</p>
-              {post.mediaUrl && ( // Placeholder for uploaded media
-                 <div className="mt-2">
-                     {/* Basic image display simulation */}
-                     <img src={post.mediaUrl} alt="User upload" className={`max-w-sm max-h-60 ${getRoundedClass('md')} border`} />
+         <div className={`bg-white p-6 rounded-lg shadow-md border-l-4 border-${siteSettings.secondaryColor}`}>
+             <h2 className="text-2xl font-semibold mb-3">Latest News</h2>
+             {blogPosts.length > 0 ? (
+                <div className="space-y-2">
+                    <p className="font-medium">{blogPosts[0].title}</p>
+                    <p className="text-sm text-gray-600 truncate">{blogPosts[0].content}</p>
+                    <button onClick={() => handleNavigate('blog')} className={`text-${siteSettings.primaryColor} hover:underline text-sm`}>Read More</button>
+                </div>
+             ) : (
+                <p>No news yet.</p>
+             )}
+         </div>
+      </div>
+       {/* Placeholder for more content */}
+       <div className="bg-gray-100 p-6 rounded-lg shadow-inner">
+            <h3 className="text-xl font-semibold mb-2">Community Spotlight</h3>
+            {userPosts.length > 0 ? (
+                 <div className="flex items-center space-x-3">
+                     {getUserById(userPosts[0].authorId)?.profilePic ? (
+                         <img src={getUserById(userPosts[0].authorId)?.profilePic!} alt="" className="w-10 h-10 rounded-full object-cover"/>
+                     ) : (
+                          <div className="bg-gray-300 rounded-full w-10 h-10 flex items-center justify-center text-gray-600">?</div>
+                     )}
+                    <p>"{userPosts[0].content}" - <span className="font-medium">{getUserById(userPosts[0].authorId)?.username ?? 'Unknown User'}</span></p>
                  </div>
-              )}
-               {/* Add moderation tools for admins if needed */}
-               {hasPermission(PERMISSIONS.MODERATE_POSTS) && (
-                   <div className="mt-2 border-t pt-2">
-                      <button className="text-xs text-red-500 hover:text-red-700">Delete Post</button>
-                   </div>
-               )}
-            </div>
-          );
-        }) : <p className="text-gray-500 italic">No user posts yet.</p>}
-      </div>
+            ) : (
+                <p>No community posts yet.</p>
+            )}
+       </div>
     </div>
   );
 
-  const renderStatusPage = () => (
-    <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-      <h1 className="text-3xl font-bold mb-6">Server Status</h1>
-      <div className={`p-6 bg-white border ${getRoundedClass('card')} shadow-md flex items-center space-x-4`}>
-        <span className={`h-4 w-4 rounded-full ${
-          serverStatus === 'online' ? 'bg-green-500' : serverStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500'
-        }`}></span>
-        <div>
-          <p className="text-xl font-semibold">
-            Server is currently: <span className={`font-bold ${
-              serverStatus === 'online' ? 'text-green-600' : serverStatus === 'offline' ? 'text-red-600' : 'text-yellow-600'
-            }`}>{serverStatus.toUpperCase()}</span>
-          </p>
-          {serverStatus === 'online' && <p className="text-gray-600">Players Online: 15/100 (Simulated)</p>}
-           {serverStatus === 'maintenance' && <p className="text-gray-600">Expected downtime: ~1 hour</p>}
+    const renderBlogPage = () => (
+        <div className="space-y-8">
+            <h1 className="text-3xl font-bold border-b pb-2">Server Blog</h1>
+            {blogPosts.length === 0 ? <p>No blog posts yet.</p> : null}
+            {blogPosts.map(post => {
+                const author = getUserById(post.authorId);
+                return (
+                    <article key={post.id} className="bg-white p-6 rounded-lg shadow-md">
+                        <h2 className="text-2xl font-semibold mb-2">{post.title}</h2>
+                        <p className="text-sm text-gray-500 mb-3">
+                            By {author?.username ?? 'Admin'} on {post.createdAt.toLocaleDateString()}
+                        </p>
+                        <p className="text-gray-700 mb-6 whitespace-pre-wrap">{post.content}</p>
+
+                        <h3 className="text-lg font-semibold mb-3 border-t pt-4">Comments ({post.comments.length})</h3>
+                         <div className="space-y-4 mb-6 max-h-96 overflow-y-auto pr-2">
+                            {post.comments.map(comment => {
+                                const commentAuthor = comment.authorId === 'admin' ? { username: 'Admin', isAdmin: true, profilePic: null } : getUserById(comment.authorId);
+                                const isAdminComment = comment.authorId === 'admin' || admins.some(a => a.email === commentAuthor?.email && hasPermission('moderateComments'));
+                                return (
+                                    <div key={comment.id} className={`flex space-x-3 ${isAdminComment ? 'bg-blue-50 p-3 rounded-md' : ''}`}>
+                                          {commentAuthor?.profilePic ? (
+                                              <img src={commentAuthor.profilePic} alt={commentAuthor.username} className="w-10 h-10 rounded-full object-cover mt-1"/>
+                                          ) : (
+                                              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold mt-1 ${isAdminComment ? 'bg-blue-500' : `bg-${siteSettings.primaryColor}`}`}>
+                                                  {isAdminComment ? 'A' : commentAuthor?.username?.charAt(0).toUpperCase() ?? '?'}
+                                              </div>
+                                          )}
+                                        <div>
+                                             <p className="font-semibold">
+                                                  {isAdminComment ? 'Admin' : commentAuthor?.username ?? 'Unknown User'}
+                                                  {commentAuthor?.isAdmin && !isAdminComment && <span title="Linked Admin Account" className="text-blue-600 text-xs ml-1">(Admin Link)</span>}
+                                                  {commentAuthor?.badges?.map(badgeId => {
+                                                      const badge = getBadgeById(badgeId);
+                                                      return badge ? <span key={badgeId} title={badge.description} className="ml-1 text-xs">{badge.emoji}</span> : null;
+                                                  })}
+                                             </p>
+                                            <p className="text-sm text-gray-700">{comment.content}</p>
+                                            <p className="text-xs text-gray-500 mt-1">{comment.createdAt.toLocaleString()}</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                            {post.comments.length === 0 && <p className="text-sm text-gray-500">No comments yet.</p>}
+                        </div>
+
+                        {(isLoggedIn || (isAdminLoggedIn && hasPermission('moderateComments'))) && (
+                            <form onSubmit={(e) => { e.preventDefault(); handleAddComment(post.id); }} className="mt-4 flex space-x-2">
+                                <input
+                                    type="text"
+                                    placeholder="Add a comment..."
+                                    value={newComment[post.id] || ''}
+                                    onChange={(e) => setNewComment(prev => ({ ...prev, [post.id]: e.target.value }))}
+                                    className="flex-grow border rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                <button type="submit" className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                                    Post
+                                </button>
+                            </form>
+                        )}
+                         {!isLoggedIn && !isAdminLoggedIn && (
+                              <p className="text-sm text-gray-600 mt-4">Please <button onClick={() => handleNavigate('login')} className="text-blue-600 hover:underline">login</button> to comment.</p>
+                         )}
+                    </article>
+                );
+            })}
         </div>
-      </div>
-       {/* Admin control to change status */}
-      {isAdmin(loggedInUser) && hasPermission(PERMISSIONS.CONFIGURE_SYSTEM) && (
-          <div className="mt-6">
-             <h3 className="text-lg font-semibold mb-2">Admin: Set Server Status</h3>
-             <select
-                value={serverStatus}
-                onChange={(e) => setServerStatus(e.target.value as 'online' | 'offline' | 'maintenance')}
-                className={`p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-             >
-                <option value="online">Online</option>
-                <option value="offline">Offline</option>
-                <option value="maintenance">Maintenance</option>
-            </select>
-          </div>
-      )}
-    </div>
-  );
+    );
 
-   const renderLoginPage = () => (
-    <div className={`min-h-screen flex items-center justify-center bg-gray-100 ${getFontFamilyClass()}`}>
-      <div className={`p-8 bg-white ${getRoundedClass('card')} shadow-md w-full max-w-md`}>
-        <h2 className="text-2xl font-bold text-center mb-6">Login</h2>
-        <form onSubmit={handleUserLogin}>
-          <div className="mb-4">
-            <label className="block text-gray-700 mb-2" htmlFor="login-email">Email</label>
-            <input
-              type="email"
-              id="login-email"
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-              required
-            />
-          </div>
-          <div className="mb-6">
-            <label className="block text-gray-700 mb-2" htmlFor="login-password">Password</label>
-            <input
-              type="password"
-              id="login-password"
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            className={`w-full py-2 px-4 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-${siteStyles.primaryColor}-500`}
-          >
-            Login
-          </button>
-        </form>
-        <p className="text-center mt-4 text-gray-600">
-            Don't have an account? <a href="#register" onClick={(e) => { e.preventDefault(); handleNavigation('register'); }} className={`text-${siteStyles.primaryColor}-600 hover:underline`}>Register here</a>
-        </p>
-        {/* Simulated verification link area */}
-         <div className="mt-6 border-t pt-4 text-sm text-gray-500">
-            <p className="font-semibold mb-1">Email Verification Simulation:</p>
-            {users.filter(u => !u.isVerified).map(u => (
-                 <button key={u.id} onClick={() => handleVerifyEmail(u.id)} className="text-blue-500 hover:underline mr-2 mb-1">Verify {u.email}</button>
+
+  const renderLoginPage = () => (
+    <div className="max-w-md mx-auto mt-10">
+      <form onSubmit={handleLogin} className="bg-white p-8 rounded-lg shadow-md space-y-4">
+        <h2 className="text-2xl font-bold text-center mb-6">User Login</h2>
+        {renderMessages()}
+         {/* Simulation verification buttons */}
+         <div className="mb-4 space-y-2 text-sm bg-yellow-100 p-3 rounded border border-yellow-300">
+            <p className="font-semibold">Simulation Only:</p>
+            <p>If you registered but cannot log in, click verify:</p>
+             {users.filter(u => !u.isVerified).map(u => (
+                 <button key={u.id} onClick={() => handleVerifyEmail(u.email)} className="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 mr-1">
+                     Verify {u.email}
+                 </button>
             ))}
-            {users.every(u => u.isVerified) && <p className="italic">No pending verifications.</p>}
+            {users.every(u => u.isVerified) && <p className="text-xs text-gray-600">All users are verified.</p>}
+         </div>
+        <div>
+          <label className="block text-gray-700 mb-1">Email</label>
+          <input
+            type="email"
+            value={loginEmail}
+            onChange={(e) => setLoginEmail(e.target.value)}
+            required
+            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
         </div>
-      </div>
+        <div>
+          <label className="block text-gray-700 mb-1">Password</label>
+          <input
+            type="password"
+            value={loginPassword}
+            onChange={(e) => setLoginPassword(e.target.value)}
+            required
+            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <button type="submit" className={`w-full bg-${siteSettings.primaryColor} text-white py-2 rounded hover:bg-opacity-90`}>
+          Login
+        </button>
+         <p className="text-center text-sm text-gray-600">
+            Don't have an account? <button onClick={() => handleNavigate('register')} className="text-blue-600 hover:underline">Register here</button>
+        </p>
+      </form>
     </div>
   );
 
    const renderRegisterPage = () => (
-     <div className={`min-h-screen flex items-center justify-center bg-gray-100 ${getFontFamilyClass()}`}>
-      <div className={`p-8 bg-white ${getRoundedClass('card')} shadow-md w-full max-w-md`}>
+    <div className="max-w-md mx-auto mt-10">
+      <form onSubmit={handleRegister} className="bg-white p-8 rounded-lg shadow-md space-y-4">
         <h2 className="text-2xl font-bold text-center mb-6">Register</h2>
-        <form onSubmit={handleRegister}>
-           <div className="mb-4">
-            <label className="block text-gray-700 mb-2" htmlFor="register-username">Username</label>
-            <input
-              type="text"
-              id="register-username"
-              value={registerUsername}
-              onChange={(e) => setRegisterUsername(e.target.value)}
-              className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-              required
-            />
-          </div>
-          <div className="mb-4">
-            <label className="block text-gray-700 mb-2" htmlFor="register-email">Email</label>
-            <input
-              type="email"
-              id="register-email"
-              value={registerEmail}
-              onChange={(e) => setRegisterEmail(e.target.value)}
-              className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-              required
-            />
-          </div>
-          <div className="mb-6">
-            <label className="block text-gray-700 mb-2" htmlFor="register-password">Password</label>
-            <input
-              type="password"
-              id="register-password"
-              value={registerPassword}
-              onChange={(e) => setRegisterPassword(e.target.value)}
-              className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            className={`w-full py-2 px-4 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-${siteStyles.primaryColor}-500`}
-          >
-            Register
-          </button>
-        </form>
-         <p className="text-center mt-4 text-gray-600">
-            Already have an account? <a href="#login" onClick={(e) => { e.preventDefault(); handleNavigation('login'); }} className={`text-${siteStyles.primaryColor}-600 hover:underline`}>Login here</a>
+        {renderMessages()}
+        <div>
+          <label className="block text-gray-700 mb-1">Username</label>
+          <input
+            type="text"
+            value={registerUsername}
+            onChange={(e) => setRegisterUsername(e.target.value)}
+            required
+            minLength={3}
+            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-gray-700 mb-1">Email</label>
+          <input
+            type="email"
+            value={registerEmail}
+            onChange={(e) => setRegisterEmail(e.target.value)}
+            required
+            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-gray-700 mb-1">Password</label>
+          <input
+            type="password"
+            value={registerPassword}
+            onChange={(e) => setRegisterPassword(e.target.value)}
+            required
+            minLength={6}
+            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+        <button type="submit" className={`w-full bg-${siteSettings.secondaryColor} text-white py-2 rounded hover:bg-opacity-90`}>
+          Register
+        </button>
+         <p className="text-center text-sm text-gray-600">
+            Already have an account? <button onClick={() => handleNavigate('login')} className="text-blue-600 hover:underline">Login here</button>
         </p>
-      </div>
-    </div>
-   );
-
-  const renderAdminLoginPage = () => (
-    <div className={`min-h-screen flex items-center justify-center bg-gray-900 text-white ${getFontFamilyClass()}`}>
-      <div className={`p-8 bg-gray-800 ${getRoundedClass('card')} shadow-lg w-full max-w-md border border-gray-700`}>
-        <h2 className="text-2xl font-bold text-center mb-6">Admin Login</h2>
-        <form onSubmit={handleAdminLogin}>
-          <div className="mb-4">
-            <label className="block text-gray-300 mb-2" htmlFor="admin-login-email">Admin Email</label>
-            <input
-              type="email"
-              id="admin-login-email"
-              value={adminLoginEmail}
-              onChange={(e) => setAdminLoginEmail(e.target.value)}
-               className={`w-full p-2 border bg-gray-700 border-gray-600 ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500 text-white`}
-              required
-            />
-          </div>
-          <div className="mb-6">
-            <label className="block text-gray-300 mb-2" htmlFor="admin-login-password">Admin Password</label>
-            <input
-              type="password"
-              id="admin-login-password"
-              value={adminLoginPassword}
-              onChange={(e) => setAdminLoginPassword(e.target.value)}
-              className={`w-full p-2 border bg-gray-700 border-gray-600 ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500 text-white`}
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            className={`w-full py-2 px-4 ${getPrimaryColorClasses('bg', 600)} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 700)} focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-${siteStyles.primaryColor}-500`}
-          >
-            Admin Login
-          </button>
-        </form>
-         <p className="text-center mt-4 text-sm text-gray-400">
-            Access restricted to authorized personnel.
-        </p>
-      </div>
+      </form>
     </div>
   );
 
-  const renderProfilePage = () => {
-     if (!loggedInUser) {
-         // Redirect to login if not logged in
-         useEffect(() => { handleNavigation('login'); }, []);
-         return null; // Or a loading indicator
-     }
+  const renderAdminLoginPage = () => (
+     <div className="max-w-md mx-auto mt-20">
+        <form onSubmit={handleAdminLogin} className="bg-gray-800 p-8 rounded-lg shadow-md space-y-4">
+            <h2 className="text-2xl font-bold text-center mb-6 text-white">Admin Login</h2>
+             {renderMessages()}
+            <div>
+            <label className="block text-gray-300 mb-1">Admin Email</label>
+            <input
+                type="email"
+                value={adminLoginEmail}
+                onChange={(e) => setAdminLoginEmail(e.target.value)}
+                required
+                className="w-full px-3 py-2 border rounded bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            </div>
+            <div>
+            <label className="block text-gray-300 mb-1">Password</label>
+            <input
+                type="password"
+                value={adminLoginPassword}
+                onChange={(e) => setAdminLoginPassword(e.target.value)}
+                required
+                className="w-full px-3 py-2 border rounded bg-gray-700 text-white border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            </div>
+            <button type="submit" className={`w-full bg-${siteSettings.primaryColor} text-white py-2 rounded hover:bg-opacity-90`}>
+                Login
+            </button>
+             <p className="text-xs text-center text-gray-400 pt-4">Access restricted. Authorized personnel only.</p>
+        </form>
+    </div>
+  );
 
-    return (
-      <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-        <h1 className="text-3xl font-bold mb-6">Your Profile</h1>
-        <div className={`p-6 bg-white border ${getRoundedClass('card')} shadow-md`}>
-           <div className="flex items-center space-x-4 mb-6">
-                {loggedInUser.profilePicUrl ? (
-                     <img src={loggedInUser.profilePicUrl} alt="Profile" className={`w-24 h-24 ${getRoundedClass('full')} object-cover border-2`} />
-                ) : (
-                    <div className={`bg-gray-200 border-2 border-dashed ${getRoundedClass('full')} w-24 h-24 flex items-center justify-center text-3xl text-gray-500`}>
-                         {loggedInUser.username.substring(0,1)}
+    const renderProfilePage = () => {
+        if (!currentUser) return <p>Please log in to view your profile.</p>;
+
+        return (
+            <div className="max-w-2xl mx-auto mt-10">
+                <h1 className="text-3xl font-bold mb-6">Your Profile</h1>
+                {renderMessages()}
+                <form onSubmit={handleUpdateProfile} className="bg-white p-8 rounded-lg shadow-md space-y-6">
+                     <div className="flex items-center space-x-4">
+                         {/* Profile Picture Display and Upload */}
+                         <div className="flex-shrink-0">
+                             {currentUser.profilePic ? (
+                                 <img src={currentUser.profilePic} alt={currentUser.username} className="w-24 h-24 rounded-full object-cover border-4 border-gray-200"/>
+                             ) : (
+                                 <div className="bg-gray-400 border-4 border-gray-200 rounded-full w-24 h-24 flex items-center justify-center text-4xl font-semibold text-white">
+                                     {currentUser.username.charAt(0).toUpperCase()}
+                                 </div>
+                             )}
+                         </div>
+                         <div className="flex-grow">
+                              <label className="block text-gray-700 mb-1">Change Profile Picture</label>
+                              <input
+                                    type="file"
+                                    accept="image/*"
+                                    ref={profilePicInputRef}
+                                    onChange={handleProfilePicChange}
+                                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                              />
+                              {profilePicFile && <p className="text-xs text-gray-600 mt-1">Selected: {profilePicFile.name}</p>}
+                         </div>
+                     </div>
+
+                    <div>
+                        <label className="block text-gray-700 mb-1">Username</label>
+                        <input
+                            type="text"
+                            value={profileUsername}
+                            onChange={(e) => setProfileUsername(e.target.value)}
+                            required
+                            minLength={3}
+                            className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
                     </div>
-                )}
-                <div>
-                     <h2 className="text-2xl font-semibold">{loggedInUser.username}</h2>
-                     <p className="text-gray-600">{loggedInUser.email}</p>
-                     {isAdmin(loggedInUser) && <span className={`mt-1 inline-block px-2 py-0.5 text-xs ${getPrimaryColorClasses('bg', 600)} text-white rounded-full`}>Admin</span>}
-                     <div className="mt-2">
-                         {renderUserBadges(loggedInUser)}
+                    <div>
+                        <label className="block text-gray-700 mb-1">Email</label>
+                        <input
+                            type="email"
+                            value={currentUser.email}
+                            disabled // Don't allow email change from profile page in this example
+                            className="w-full px-3 py-2 border rounded bg-gray-100 text-gray-500 cursor-not-allowed"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">Email cannot be changed here.</p>
+                    </div>
+
+                    {/* Display Badges */}
+                     <div>
+                          <h3 className="text-lg font-semibold mb-2">Your Badges</h3>
+                          {currentUser.badges.length > 0 ? (
+                               <div className="flex flex-wrap gap-2">
+                                   {currentUser.badges.map(badgeId => {
+                                       const badge = getBadgeById(badgeId);
+                                       return badge ? (
+                                           <span key={badgeId} title={badge.description} className="bg-gray-200 text-gray-800 px-3 py-1 rounded-full text-sm flex items-center space-x-1">
+                                               <span>{badge.emoji}</span>
+                                               <span>{badge.name}</span>
+                                           </span>
+                                       ) : null;
+                                   })}
+                               </div>
+                          ) : (
+                              <p className="text-sm text-gray-500">You haven't earned any badges yet.</p>
+                          )}
+                     </div>
+
+
+                    <button type="submit" className={`w-full bg-${siteSettings.primaryColor} text-white py-2 rounded hover:bg-opacity-90`}>
+                        Update Profile
+                    </button>
+                </form>
+            </div>
+        );
+    };
+
+    const renderUserPostsPage = () => {
+        if (!isLoggedIn) return <p>Please log in to view and create community posts.</p>;
+
+        return (
+             <div className="max-w-2xl mx-auto mt-10 space-y-8">
+                  <h1 className="text-3xl font-bold border-b pb-2">Community Posts</h1>
+                 {/* Post Creation Form */}
+                  <form onSubmit={handleCreateUserPost} className="bg-white p-6 rounded-lg shadow-md space-y-4">
+                        <h2 className="text-xl font-semibold">Create a New Post</h2>
+                        {renderMessages()}
+                        <div>
+                             <textarea
+                                 placeholder={`What's on your mind, ${currentUser?.username}?`}
+                                 value={newPostContent}
+                                 onChange={(e) => setNewPostContent(e.target.value)}
+                                 required
+                                 rows={3}
+                                 className="w-full p-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                        </div>
+                         <div>
+                              <label className="block text-gray-700 mb-1 text-sm">Upload Image (Optional)</label>
+                              <input
+                                    type="file"
+                                    accept="image/*"
+                                    ref={fileInputRef}
+                                    onChange={handleFileChange}
+                                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                               />
+                                {newPostImage && <p className="text-xs text-gray-600 mt-1">Selected: {newPostImage.name}</p>}
+                         </div>
+                         <button type="submit" className={`bg-${siteSettings.secondaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                              Post
+                         </button>
+                  </form>
+
+                 {/* Display User Posts */}
+                 <div className="space-y-6">
+                    {userPosts.length === 0 && <p className="text-center text-gray-500">No community posts yet. Be the first!</p>}
+                     {userPosts.map(post => {
+                        const author = getUserById(post.authorId);
+                        return (
+                            <div key={post.id} className="bg-white p-4 rounded-lg shadow flex space-x-4">
+                                <div className="flex-shrink-0">
+                                     {author?.profilePic ? (
+                                         <img src={author.profilePic} alt={author.username} className="w-12 h-12 rounded-full object-cover"/>
+                                     ) : (
+                                         <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold bg-${siteSettings.primaryColor}`}>
+                                             {author?.username?.charAt(0).toUpperCase() ?? '?'}
+                                         </div>
+                                     )}
+                                </div>
+                                <div className="flex-grow">
+                                    <p className="font-semibold">
+                                         {author?.username ?? 'Unknown User'}
+                                          {author?.isAdmin && <span title="Linked Admin Account" className="text-blue-600 text-xs ml-1">(Admin Link)</span>}
+                                            {author?.badges?.map(badgeId => {
+                                                const badge = getBadgeById(badgeId);
+                                                return badge ? <span key={badgeId} title={badge.description} className="ml-1 text-xs">{badge.emoji}</span> : null;
+                                            })}
+                                    </p>
+                                    <p className="text-sm text-gray-500 mb-2">{post.createdAt.toLocaleString()}</p>
+                                    <p className="text-gray-800 mb-3">{post.content}</p>
+                                    {post.imageUrl && (
+                                        <img src={post.imageUrl} alt="User upload" className="max-h-60 w-auto rounded mt-2 mb-2 border"/>
+                                    )}
+                                    {/* Add comment/like placeholders if needed */}
+                                </div>
+                            </div>
+                        );
+                     })}
+                 </div>
+             </div>
+        );
+    };
+
+
+  const renderServerStatusPage = () => (
+    <div className="max-w-lg mx-auto mt-10 text-center">
+        <h1 className="text-3xl font-bold mb-6">Server Status</h1>
+         <div className={`p-8 rounded-lg shadow-md ${serverStatusData.online ? 'bg-green-100 border-green-500' : 'bg-red-100 border-red-500'} border-l-4`}>
+             <p className="text-xl font-semibold mb-4">
+                Status: <span className={`font-bold ${serverStatusData.online ? 'text-green-700' : 'text-red-700'}`}>
+                    {serverStatusData.online ? 'Online' : 'Offline'}
+                </span>
+             </p>
+             {serverStatusData.online && (
+                <p className="text-lg text-gray-700">
+                    Players Online: <span className="font-bold">{serverStatusData.players}</span>
+                </p>
+             )}
+             {!serverStatusData.online && (
+                 <p className="text-gray-600">The server is currently offline. Please check back later or contact support.</p>
+             )}
+              <p className="text-sm text-gray-500 mt-6">Server IP: <span className="font-mono bg-gray-200 px-1 py-0.5 rounded">play.yourserver.com</span></p>
+         </div>
+    </div>
+  );
+
+    const renderShopPage = () => (
+        <div className="max-w-4xl mx-auto mt-10">
+             <h1 className="text-3xl font-bold mb-6">Shop (Coming Soon)</h1>
+             {!showShop && !isAdminLoggedIn && (
+                <div className="bg-yellow-100 p-6 rounded-lg shadow-md text-center">
+                    <p className="text-xl font-semibold text-yellow-800">The shop is currently under construction and will be available soon!</p>
+                    <p className="text-gray-600 mt-2">Check back later for awesome items and ranks.</p>
+                 </div>
+             )}
+              {(showShop || isAdminLoggedIn) && (
+                 <div className="bg-white p-6 rounded-lg shadow-md">
+                      {isAdminLoggedIn && (
+                          <div className="mb-6 p-3 bg-blue-50 border border-blue-200 rounded text-blue-700 text-sm">
+                              <p><span className="font-semibold">Admin View:</span> This page is {showShop ? 'currently visible' : 'hidden from'} regular users.</p>
+                              <button
+                                  onClick={handleAdminToggleShop}
+                                  className="mt-2 text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
+                              >
+                                  {showShop ? 'Hide Shop from Users' : 'Make Shop Visible'}
+                              </button>
+                          </div>
+                      )}
+                     <p className="text-center text-gray-500">Shop content goes here... categories, items, etc.</p>
+                     {/* Placeholder items */}
+                     <div className="grid md:grid-cols-3 gap-6 mt-6">
+                        <div className="border rounded-lg p-4 text-center">
+                            <div className="bg-gray-200 border-2 border-dashed rounded-xl w-16 h-16 mx-auto mb-3" />
+                            <h3 className="font-semibold">Awesome Rank</h3>
+                            <p className="text-sm text-gray-600 mb-2">$9.99</p>
+                             <button className={`w-full bg-gray-300 text-gray-500 py-1 rounded cursor-not-allowed`}>Coming Soon</button>
+                        </div>
+                        <div className="border rounded-lg p-4 text-center">
+                            <div className="bg-gray-200 border-2 border-dashed rounded-xl w-16 h-16 mx-auto mb-3" />
+                            <h3 className="font-semibold">Special Key</h3>
+                            <p className="text-sm text-gray-600 mb-2">$4.99</p>
+                            <button className={`w-full bg-gray-300 text-gray-500 py-1 rounded cursor-not-allowed`}>Coming Soon</button>
+                        </div>
+                        <div className="border rounded-lg p-4 text-center">
+                             <div className="bg-gray-200 border-2 border-dashed rounded-xl w-16 h-16 mx-auto mb-3" />
+                            <h3 className="font-semibold">Cosmetic Pack</h3>
+                            <p className="text-sm text-gray-600 mb-2">$14.99</p>
+                           <button className={`w-full bg-gray-300 text-gray-500 py-1 rounded cursor-not-allowed`}>Coming Soon</button>
+                        </div>
                      </div>
                  </div>
-           </div>
-
-           <form onSubmit={handleProfileUpdate}>
-                <h3 className="text-xl font-semibold mb-4 border-t pt-4">Update Profile</h3>
-                 <div className="mb-4">
-                    <label className="block text-gray-700 mb-2" htmlFor="profile-username">Change Username</label>
-                    <input
-                        type="text"
-                        id="profile-username"
-                        value={newProfileUsername}
-                        onChange={(e) => setNewProfileUsername(e.target.value)}
-                        placeholder={loggedInUser.username}
-                        className={`w-full md:w-1/2 p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                    />
-                </div>
-                 <div className="mb-4">
-                    <label className="block text-gray-700 mb-2" htmlFor="profile-pic">Change Profile Picture</label>
-                     <input
-                        type="file"
-                        id="profile-pic"
-                        accept="image/*"
-                        onChange={handleProfilePicChange}
-                        className={`block w-full md:w-1/2 text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:border-0 file:text-sm file:font-semibold file:bg-${siteStyles.primaryColor}-50 file:text-${siteStyles.primaryColor}-700 hover:file:bg-${siteStyles.primaryColor}-100 ${getRoundedClass('button')}`} />
-                     {newProfilePic && <p className="text-sm text-gray-500 mt-1">Selected: {newProfilePic.name}</p>}
-                 </div>
-                 {/* Add password change section here if desired */}
-                 <button
-                    type="submit"
-                    className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-                >
-                    Save Changes
-                </button>
-           </form>
+             )}
         </div>
-      </div>
     );
-  };
 
-   const renderShopPage = () => {
-     // Basic check, could add permission check too
-     if (!isAdmin(loggedInUser)) {
-        useEffect(() => { handleNavigation('home'); }, []);
-        return null;
-     }
+  // --- Admin Dashboard Render ---
 
-     return (
-      <div className={`container mx-auto p-6 ${getFontFamilyClass()}`}>
-        <h1 className="text-3xl font-bold mb-6">Shop (Admin Preview - Unpublished)</h1>
-        <div className={`p-6 bg-yellow-100 border border-yellow-300 text-yellow-800 ${getRoundedClass('card')} shadow-md mb-6`}>
-            <p><span className="font-bold">Note:</span> This page is currently unpublished and only visible to administrators.</p>
-        </div>
-         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Placeholder Shop Items */}
-            {[1, 2, 3].map(i => (
-                <div key={i} className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                     <div className={`bg-gray-200 border-2 border-dashed ${getRoundedClass('lg')} w-full h-32 mb-4 flex items-center justify-center text-gray-400`}>Item Image {i}</div>
-                     <h3 className="text-lg font-semibold mb-1">Shop Item {i}</h3>
-                     <p className="text-gray-600 mb-2">Description for item {i}.</p>
-                     <div className="flex justify-between items-center">
-                        <span className="font-bold text-lg text-green-600">$9.99</span>
-                         <button className={`px-3 py-1 bg-gray-700 text-white ${getRoundedClass('button')} text-sm hover:bg-gray-800`}>
-                            Configure (Admin)
-                         </button>
-                    </div>
-                </div>
-            ))}
-         </div>
-      </div>
-    );
-   };
-
-  // --- Admin Dashboard Rendering ---
   const renderAdminDashboard = () => {
-    if (!isAdmin(loggedInUser)) {
-       // Should not happen if routing is correct, but as a safeguard
-       useEffect(() => { handleNavigation('home'); }, []);
-       return null;
-    }
+    if (!isAdminLoggedIn || !currentAdmin) return <p>Access Denied.</p>;
+
+    const sidebarWidth = "w-64";
+    const mainContentMargin = "ml-64";
+
+    const availablePermissions: AdminPermission[] = ['manageContent', 'manageStyles', 'manageBlogs', 'manageUsers', 'manageAdmins', 'manageSettings', 'manageShop', 'manageBadges', 'moderateComments'];
 
     return (
-      <div className={`min-h-screen bg-gray-100 ${getFontFamilyClass()}`}>
-        {renderNavbar()} {/* Show navbar even in admin */}
-        <div className="flex">
-          {/* Admin Sidebar */}
-          <aside className="w-64 bg-gray-800 text-gray-100 p-4 space-y-2 h-screen sticky top-0">
-             <h2 className="text-xl font-semibold mb-4">Admin Menu</h2>
-            <button onClick={() => setAdminDashboardSection('overview')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'overview' ? 'bg-gray-900' : ''}`}>Overview</button>
-            {hasPermission(PERMISSIONS.MANAGE_CONTENT) && <button onClick={() => setAdminDashboardSection('content')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'content' ? 'bg-gray-900' : ''}`}>Manage Content</button>}
-            {hasPermission(PERMISSIONS.MANAGE_STYLES) && <button onClick={() => setAdminDashboardSection('styles')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'styles' ? 'bg-gray-900' : ''}`}>Customize Styles</button>}
-            {hasPermission(PERMISSIONS.MANAGE_BLOGS) && <button onClick={() => setAdminDashboardSection('manageBlogs')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'manageBlogs' ? 'bg-gray-900' : ''}`}>Manage Blog</button>}
-            {hasPermission(PERMISSIONS.MANAGE_USERS) && <button onClick={() => setAdminDashboardSection('manageUsers')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'manageUsers' ? 'bg-gray-900' : ''}`}>Manage Users</button>}
-             {hasPermission(PERMISSIONS.MANAGE_ADMINS) && <button onClick={() => setAdminDashboardSection('manageAdmins')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'manageAdmins' ? 'bg-gray-900' : ''}`}>Manage Admins</button>}
-            {hasPermission(PERMISSIONS.MANAGE_BADGES) && <button onClick={() => setAdminDashboardSection('manageBadges')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'manageBadges' ? 'bg-gray-900' : ''}`}>Manage Badges</button>}
-            {hasPermission(PERMISSIONS.CONFIGURE_SYSTEM) && <button onClick={() => setAdminDashboardSection('configureSmtp')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'configureSmtp' ? 'bg-gray-900' : ''}`}>System Config</button>}
-             {hasPermission(PERMISSIONS.MODERATE_POSTS) && <button onClick={() => setAdminDashboardSection('moderatePosts')} className={`block w-full text-left px-3 py-2 ${getRoundedClass('button')} hover:bg-gray-700 ${adminDashboardSection === 'moderatePosts' ? 'bg-gray-900' : ''}`}>Moderate Posts</button>}
-          </aside>
+      <div className="flex min-h-screen bg-gray-100">
+        {/* Sidebar */}
+        <aside className={`fixed top-0 left-0 h-full bg-gray-800 text-gray-300 ${sidebarWidth} p-4 space-y-2 flex flex-col shadow-lg`}>
+          <h2 className="text-xl font-semibold text-white mb-4 pb-2 border-b border-gray-700">Admin Panel</h2>
+          <button onClick={() => setAdminSection('dashboard')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection === 'dashboard' ? 'bg-gray-700 text-white' : ''}`}>Dashboard</button>
+          {hasPermission('manageContent') && <button onClick={() => setAdminSection('content')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection === 'content' ? 'bg-gray-700 text-white' : ''}`}>Edit Content</button>}
+          {hasPermission('manageStyles') && <button onClick={() => setAdminSection('styles')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection === 'styles' ? 'bg-gray-700 text-white' : ''}`}>Change Styles</button>}
+          {hasPermission('manageBlogs') && <button onClick={() => setAdminSection('blogs')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection.startsWith('blogs') ? 'bg-gray-700 text-white' : ''}`}>Manage Blogs</button>}
+          {hasPermission('manageUsers') && <button onClick={() => setAdminSection('users')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection === 'users' ? 'bg-gray-700 text-white' : ''}`}>Manage Users</button>}
+          {hasPermission('manageAdmins') && <button onClick={() => setAdminSection('admins')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection.startsWith('admins') ? 'bg-gray-700 text-white' : ''}`}>Manage Admins</button>}
+          {hasPermission('manageBadges') && <button onClick={() => setAdminSection('badges')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection.startsWith('badges') ? 'bg-gray-700 text-white' : ''}`}>Manage Badges</button>}
+          {hasPermission('manageShop') && <button onClick={() => setAdminSection('shop')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection === 'shop' ? 'bg-gray-700 text-white' : ''}`}>Manage Shop</button>}
+          {hasPermission('manageSettings') && <button onClick={() => setAdminSection('settings')} className={`w-full text-left px-3 py-2 rounded hover:bg-gray-700 hover:text-white ${adminSection === 'settings' ? 'bg-gray-700 text-white' : ''}`}>Settings</button>}
 
-          {/* Admin Content Area */}
-          <main className="flex-1 p-6">
-             {showPasswordChangePrompt && (
-                <div className={`p-4 mb-6 bg-red-100 border border-red-400 text-red-700 ${getRoundedClass('card')}`}>
-                    <p><span className="font-bold">Action Required:</span> You are logged in with the default administrator password. Please change it immediately or create a new administrator account and delete the default one.</p>
+           <div className="flex-grow"></div> {/* Pushes logout to bottom */}
+
+             <button onClick={() => handleNavigate('home')} className="w-full text-left px-3 py-2 rounded text-sm hover:bg-gray-700 hover:text-white">View Site</button>
+             <button onClick={handleAdminLogout} className="w-full text-left px-3 py-2 rounded bg-red-600 text-white hover:bg-red-700">Logout Admin</button>
+             <p className="text-xs text-gray-500 pt-2">Logged in as: {currentAdmin.email}</p>
+
+        </aside>
+
+        {/* Main Content Area */}
+        <main className={`p-8 ${mainContentMargin} w-full`}>
+          {renderMessages()}
+          {currentAdmin.requiresPasswordChange && adminSection !== 'admins_edit' && adminSection !== 'admins_new' && (
+                <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+                    <p className="font-bold">Security Requirement:</p>
+                    <p>You must change your default password or create a new administrator account before accessing other features.</p>
+                    <button onClick={() => setAdminSection('admins')} className="mt-2 text-sm text-blue-600 hover:underline">Go to Admin Management</button>
+                </div>
+            )}
+
+          {/* --- Dashboard Home --- */}
+          {adminSection === 'dashboard' && (
+             <div className="space-y-6">
+                 <h1 className="text-3xl font-bold">Admin Dashboard</h1>
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div className="bg-white p-4 rounded-lg shadow">
+                         <h3 className="font-semibold text-lg mb-2">Users</h3>
+                         <p className="text-3xl font-bold">{users.length}</p>
+                         <p className="text-sm text-gray-500">Registered Users</p>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg shadow">
+                         <h3 className="font-semibold text-lg mb-2">Blog Posts</h3>
+                         <p className="text-3xl font-bold">{blogPosts.length}</p>
+                           <button onClick={() => setAdminSection('blogs')} className={`text-${siteSettings.primaryColor} hover:underline text-sm`}>Manage</button>
+                      </div>
+                      <div className="bg-white p-4 rounded-lg shadow">
+                         <h3 className="font-semibold text-lg mb-2">Server Status</h3>
+                         <p className={`text-xl font-bold ${serverStatusData.online ? 'text-green-600' : 'text-red-600'}`}>{serverStatusData.online ? 'Online' : 'Offline'}</p>
+                         {serverStatusData.online && <p className="text-sm text-gray-500">{serverStatusData.players} players</p>}
+                         <button onClick={() => handleNavigate('serverStatus')} className={`text-${siteSettings.primaryColor} hover:underline text-sm mt-1`}>View Status Page</button>
+                      </div>
+                  </div>
+             </div>
+          )}
+
+          {/* --- Content Editing --- */}
+          {adminSection === 'content' && hasPermission('manageContent') && (
+             <div className="space-y-6">
+                 <h1 className="text-3xl font-bold">Edit Site Content</h1>
+                  <div className="bg-white p-6 rounded-lg shadow">
+                        <h2 className="text-xl font-semibold mb-3">Home Page Welcome Text</h2>
+                         <textarea
+                             value={editingContent}
+                             onChange={(e) => setEditingContent(e.target.value)}
+                             rows={5}
+                             className="w-full p-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 mb-3"
+                         />
+                          <button onClick={handleAdminSaveChanges} className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                             Save Content Changes
+                         </button>
+                  </div>
+                  {/* Add more editable sections here */}
+             </div>
+          )}
+
+            {/* --- Style Editing --- */}
+            {adminSection === 'styles' && hasPermission('manageStyles') && (
+                <div className="space-y-6">
+                    <h1 className="text-3xl font-bold">Change Site Styles</h1>
+                    <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                         <h2 className="text-xl font-semibold mb-3">Theme Colors (Tailwind Classes)</h2>
+                         <div>
+                             <label className="block text-gray-700 mb-1">Primary Color (e.g., blue-600, indigo-700)</label>
+                             <input
+                                 type="text"
+                                 value={tempPrimaryColor}
+                                 onChange={(e) => setTempPrimaryColor(e.target.value)}
+                                 className="w-full md:w-1/2 px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                              <div className={`mt-2 w-16 h-8 rounded bg-${tempPrimaryColor}`}></div> {/* Preview */}
+                         </div>
+                         <div>
+                             <label className="block text-gray-700 mb-1">Secondary Color (e.g., green-500, yellow-400)</label>
+                             <input
+                                 type="text"
+                                 value={tempSecondaryColor}
+                                 onChange={(e) => setTempSecondaryColor(e.target.value)}
+                                 className="w-full md:w-1/2 px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                              <div className={`mt-2 w-16 h-8 rounded bg-${tempSecondaryColor}`}></div> {/* Preview */}
+                         </div>
+                          <button onClick={handleAdminSaveChanges} className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                             Apply Style Changes
+                         </button>
+                    </div>
+                     {/* Add options for custom CSS snippets if desired */}
+                </div>
+            )}
+
+             {/* --- Blog Management --- */}
+             {adminSection === 'blogs' && hasPermission('manageBlogs') && (
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                        <h1 className="text-3xl font-bold">Manage Blogs</h1>
+                        <button onClick={() => setAdminSection('blogs_new')} className={`bg-${siteSettings.secondaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                            + New Post
+                        </button>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow overflow-x-auto">
+                        <table className="w-full min-w-[600px]">
+                             <thead>
+                                <tr className="border-b text-left text-gray-600">
+                                    <th className="py-2 px-3">Title</th>
+                                    <th className="py-2 px-3">Author</th>
+                                    <th className="py-2 px-3">Date</th>
+                                    <th className="py-2 px-3">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {blogPosts.map(post => {
+                                    const author = getUserById(post.authorId);
+                                    return (
+                                        <tr key={post.id} className="border-b hover:bg-gray-50">
+                                            <td className="py-2 px-3">{post.title}</td>
+                                            <td className="py-2 px-3">{author?.username ?? 'Admin'}</td>
+                                            <td className="py-2 px-3 text-sm">{post.createdAt.toLocaleDateString()}</td>
+                                            <td className="py-2 px-3 space-x-2">
+                                                 <button onClick={() => {/* Implement edit functionality */ alert('Edit not implemented')}} className="text-blue-600 hover:underline text-sm">Edit</button>
+                                                 <button onClick={() => handleAdminDeleteBlog(post.id)} className="text-red-600 hover:underline text-sm">Delete</button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        {blogPosts.length === 0 && <p className="text-center py-4 text-gray-500">No blog posts found.</p>}
+                    </div>
+                </div>
+             )}
+             {adminSection === 'blogs_new' && hasPermission('manageBlogs') && (
+                 <div className="space-y-6 max-w-3xl">
+                     <button onClick={() => setAdminSection('blogs')} className="text-blue-600 hover:underline mb-4">&larr; Back to Blog List</button>
+                     <h1 className="text-3xl font-bold">Create New Blog Post</h1>
+                     <form onSubmit={handleAdminCreateBlog} className="bg-white p-6 rounded-lg shadow space-y-4">
+                         <div>
+                             <label className="block text-gray-700 mb-1">Title</label>
+                             <input
+                                 type="text"
+                                 value={newBlogTitle}
+                                 onChange={(e) => setNewBlogTitle(e.target.value)}
+                                 required
+                                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                         </div>
+                          <div>
+                             <label className="block text-gray-700 mb-1">Content</label>
+                             <textarea
+                                 value={newBlogContent}
+                                 onChange={(e) => setNewBlogContent(e.target.value)}
+                                 required
+                                 rows={10}
+                                 className="w-full p-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                         </div>
+                          <button type="submit" className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                             Publish Post
+                         </button>
+                     </form>
+                 </div>
+             )}
+
+             {/* --- User Management --- */}
+            {adminSection === 'users' && hasPermission('manageUsers') && (
+                <div className="space-y-6">
+                    <h1 className="text-3xl font-bold">Manage Users</h1>
+                     <div className="bg-white p-6 rounded-lg shadow overflow-x-auto">
+                         <table className="w-full min-w-[800px]">
+                              <thead>
+                                <tr className="border-b text-left text-gray-600">
+                                    <th className="py-2 px-3">User</th>
+                                    <th className="py-2 px-3">Email</th>
+                                    <th className="py-2 px-3">Verified</th>
+                                    <th className="py-2 px-3">Badges</th>
+                                    <th className="py-2 px-3">Actions</th>
+                                </tr>
+                            </thead>
+                             <tbody>
+                                {users.map(user => (
+                                    <tr key={user.id} className="border-b hover:bg-gray-50">
+                                         <td className="py-2 px-3 flex items-center space-x-2">
+                                             {user.profilePic ? (
+                                                 <img src={user.profilePic} alt={user.username} className="w-8 h-8 rounded-full object-cover"/>
+                                             ) : (
+                                                 <div className="bg-gray-300 rounded-full w-8 h-8 flex items-center justify-center text-xs font-semibold">
+                                                     {user.username.charAt(0).toUpperCase()}
+                                                 </div>
+                                             )}
+                                             <span>{user.username}</span>
+                                             {user.isAdmin && <span title="Linked Admin Account" className="text-blue-600 text-xs">(Admin)</span>}
+                                         </td>
+                                        <td className="py-2 px-3">{user.email}</td>
+                                        <td className="py-2 px-3">{user.isVerified ? <span className="text-green-600">Yes</span> : <span className="text-red-600">No</span>}</td>
+                                        <td className="py-2 px-3 text-xl">
+                                            {user.badges.map(badgeId => {
+                                                const badge = getBadgeById(badgeId);
+                                                return badge ? <span key={badgeId} title={`${badge.name}: ${badge.description}`} className="mr-1 cursor-help">{badge.emoji}</span> : null;
+                                            })}
+                                        </td>
+                                         <td className="py-2 px-3 space-x-1">
+                                            {/* Add/Remove Badge Dropdown */}
+                                             <select
+                                                 onChange={(e) => e.target.value && handleAdminAssignBadge(user.id, e.target.value)}
+                                                 value=""
+                                                  className="text-xs border rounded p-1 mr-1"
+                                                  title="Assign Badge"
+                                              >
+                                                 <option value="" disabled>+ Assign Badge</option>
+                                                 {badges.filter(b => !user.badges.includes(b.id)).map(badge => (
+                                                     <option key={badge.id} value={badge.id}>{badge.emoji} {badge.name}</option>
+                                                 ))}
+                                             </select>
+                                             <select
+                                                  onChange={(e) => e.target.value && handleAdminRemoveBadge(user.id, e.target.value)}
+                                                  value=""
+                                                  className="text-xs border rounded p-1"
+                                                  title="Remove Badge"
+                                              >
+                                                  <option value="" disabled>- Remove Badge</option>
+                                                  {user.badges.map(badgeId => getBadgeById(badgeId)).filter(Boolean).map(badge => (
+                                                       <option key={badge!.id} value={badge!.id}>{badge!.emoji} {badge!.name}</option>
+                                                  ))}
+                                              </select>
+                                            {/* <button onClick={() => {/* Ban user * /}} className="text-red-600 hover:underline text-sm">Ban</button> */}
+                                         </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                         </table>
+                     </div>
+                </div>
+            )}
+
+             {/* --- Admin Management --- */}
+             {(adminSection === 'admins' || adminSection === 'admins_new' || adminSection === 'admins_edit') && hasPermission('manageAdmins') && (
+                <div className="space-y-6">
+                     {adminSection === 'admins' && (
+                         <>
+                             <div className="flex justify-between items-center">
+                                 <h1 className="text-3xl font-bold">Manage Admins</h1>
+                                 <button onClick={() => { setEditingAdminId(null); setNewAdminEmail(''); setNewAdminPassword(''); setNewAdminPasswordConfirm(''); setNewAdminPermissions([]); setAdminSection('admins_new'); }} className={`bg-${siteSettings.secondaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                                     + New Admin
+                                 </button>
+                             </div>
+                             {currentAdmin.requiresPasswordChange && (
+                                <div className="p-4 bg-yellow-100 border border-yellow-400 text-yellow-800 rounded">
+                                     <p><span className="font-bold">Action Required:</span> Either edit your current account (<span className="font-mono">{currentAdmin.email}</span>) to set a new password, or create a new admin account and log in with that.</p>
+                                 </div>
+                              )}
+                             <div className="bg-white p-6 rounded-lg shadow overflow-x-auto">
+                                 <table className="w-full min-w-[600px]">
+                                      <thead>
+                                         <tr className="border-b text-left text-gray-600">
+                                             <th className="py-2 px-3">Email</th>
+                                             <th className="py-2 px-3">Permissions</th>
+                                             <th className="py-2 px-3">Actions</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {admins.map(admin => (
+                                             <tr key={admin.id} className={`border-b hover:bg-gray-50 ${admin.requiresPasswordChange ? 'bg-yellow-50' : ''}`}>
+                                                 <td className="py-2 px-3">
+                                                      {admin.email}
+                                                      {admin.requiresPasswordChange && <span className="text-xs text-red-600 ml-2">(Requires Password Change)</span>}
+                                                      {currentAdmin.id === admin.id && <span className="text-xs text-blue-600 ml-2">(You)</span>}
+                                                 </td>
+                                                 <td className="py-2 px-3 text-xs text-gray-600">{admin.permissions.join(', ') || 'None'}</td>
+                                                 <td className="py-2 px-3 space-x-2">
+                                                      <button onClick={() => handleAdminEditAdmin(admin)} className="text-blue-600 hover:underline text-sm">Edit</button>
+                                                       {/* Prevent deletion of self or the default admin */}
+                                                      {admin.id !== currentAdmin.id && admin.email !== 'admin@mmpcs.net' && admins.length > 1 && (
+                                                         <button onClick={() => handleAdminDeleteAdmin(admin.id)} className="text-red-600 hover:underline text-sm">Delete</button>
+                                                     )}
+                                                 </td>
+                                             </tr>
+                                         ))}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </>
+                     )}
+
+                     {(adminSection === 'admins_new' || adminSection === 'admins_edit') && (
+                         <>
+                              <button onClick={() => setAdminSection('admins')} className="text-blue-600 hover:underline mb-4">&larr; Back to Admin List</button>
+                             <h1 className="text-3xl font-bold">{editingAdminId ? 'Edit Admin' : 'Create New Admin'}</h1>
+                             <form onSubmit={editingAdminId ? handleAdminUpdateAdmin : handleAdminCreateAdmin} className="bg-white p-6 rounded-lg shadow space-y-4 max-w-2xl">
+                                  <div>
+                                     <label className="block text-gray-700 mb-1">Email</label>
+                                     <input
+                                         type="email"
+                                         value={newAdminEmail}
+                                         onChange={(e) => setNewAdminEmail(e.target.value)}
+                                         required
+                                         className={`w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 ${editingAdminId && currentAdmin?.email === 'admin@mmpcs.net' && editingAdminId === currentAdmin.id ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                         disabled={editingAdminId && currentAdmin?.email === 'admin@mmpcs.net' && editingAdminId === currentAdmin.id} // Prevent changing default admin email via edit form
+                                      />
+                                       {editingAdminId && currentAdmin?.email === 'admin@mmpcs.net' && editingAdminId === currentAdmin.id && <p className="text-xs text-gray-500 mt-1">Cannot change the email of the default admin account.</p>}
+                                  </div>
+                                   <div>
+                                     <label className="block text-gray-700 mb-1">Password {editingAdminId ? '(Leave blank to keep current)' : ''}</label>
+                                     <input
+                                         type="password"
+                                         value={newAdminPassword}
+                                         onChange={(e) => setNewAdminPassword(e.target.value)}
+                                         required={!editingAdminId} // Required only for new admins
+                                         minLength={editingAdminId && newAdminPassword ? 6 : (editingAdminId ? undefined : 6)} // Min length only if setting a new one
+                                         className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                     />
+                                 </div>
+                                 {/* Require password confirmation only if a new password is being entered */}
+                                 {(newAdminPassword || (editingAdminId && currentAdmin?.id === editingAdminId && currentAdmin.requiresPasswordChange) ) && (
+                                      <div>
+                                         <label className="block text-gray-700 mb-1">Confirm Password</label>
+                                         <input
+                                             type="password"
+                                             value={newAdminPasswordConfirm}
+                                             onChange={(e) => setNewAdminPasswordConfirm(e.target.value)}
+                                             required
+                                             className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                         />
+                                     </div>
+                                 )}
+                                  <div>
+                                     <label className="block text-gray-700 mb-2">Permissions</label>
+                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                        {availablePermissions.map(perm => (
+                                            <label key={perm} className="flex items-center space-x-2 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={newAdminPermissions.includes(perm)}
+                                                    onChange={(e) => handlePermissionChange(perm, e.target.checked)}
+                                                    className="rounded focus:ring-blue-500"
+                                                />
+                                                <span>{perm.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}</span> {/* Nicer formatting */}
+                                            </label>
+                                        ))}
+                                    </div>
+                                  </div>
+                                  <button type="submit" className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                                     {editingAdminId ? 'Update Admin' : 'Create Admin'}
+                                 </button>
+                             </form>
+                         </>
+                     )}
                 </div>
              )}
 
-            {adminDashboardSection === 'overview' && renderAdminOverview()}
-            {adminDashboardSection === 'content' && hasPermission(PERMISSIONS.MANAGE_CONTENT) && renderAdminManageContent()}
-            {adminDashboardSection === 'styles' && hasPermission(PERMISSIONS.MANAGE_STYLES) && renderAdminCustomizeStyles()}
-            {adminDashboardSection === 'manageBlogs' && hasPermission(PERMISSIONS.MANAGE_BLOGS) && renderAdminManageBlog()}
-            {adminDashboardSection === 'manageUsers' && hasPermission(PERMISSIONS.MANAGE_USERS) && renderAdminManageUsers()}
-             {adminDashboardSection === 'manageAdmins' && hasPermission(PERMISSIONS.MANAGE_ADMINS) && renderAdminManageAdmins()}
-            {adminDashboardSection === 'manageBadges' && hasPermission(PERMISSIONS.MANAGE_BADGES) && renderAdminManageBadges()}
-             {adminDashboardSection === 'configureSmtp' && hasPermission(PERMISSIONS.CONFIGURE_SYSTEM) && renderAdminConfigureSmtp()}
-             {adminDashboardSection === 'moderatePosts' && hasPermission(PERMISSIONS.MODERATE_POSTS) && renderAdminModeratePosts()}
-          </main>
-        </div>
+
+              {/* --- Badge Management --- */}
+              {(adminSection === 'badges' || adminSection === 'badges_new' || adminSection === 'badges_edit') && hasPermission('manageBadges') && (
+                <div className="space-y-6">
+                    {adminSection === 'badges' && (
+                        <>
+                             <div className="flex justify-between items-center">
+                                 <h1 className="text-3xl font-bold">Manage Badges</h1>
+                                 <button onClick={() => { setEditingBadgeId(null); setNewBadgeName(''); setNewBadgeEmoji(''); setNewBadgeDesc(''); setAdminSection('badges_new'); }} className={`bg-${siteSettings.secondaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                                     + New Badge
+                                 </button>
+                             </div>
+                            <div className="bg-white p-6 rounded-lg shadow overflow-x-auto">
+                                <table className="w-full min-w-[600px]">
+                                    <thead>
+                                        <tr className="border-b text-left text-gray-600">
+                                            <th className="py-2 px-3 w-12">Emoji</th>
+                                            <th className="py-2 px-3">Name</th>
+                                            <th className="py-2 px-3">Description</th>
+                                            <th className="py-2 px-3">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {badges.map(badge => (
+                                            <tr key={badge.id} className="border-b hover:bg-gray-50">
+                                                <td className="py-2 px-3 text-2xl">{badge.emoji}</td>
+                                                <td className="py-2 px-3 font-medium">{badge.name}</td>
+                                                <td className="py-2 px-3 text-sm text-gray-700">{badge.description}</td>
+                                                <td className="py-2 px-3 space-x-2">
+                                                    <button onClick={() => handleAdminEditBadge(badge)} className="text-blue-600 hover:underline text-sm">Edit</button>
+                                                    {badge.id !== 'badge_admin' && ( // Protect default admin badge
+                                                        <button onClick={() => handleAdminDeleteBadge(badge.id)} className="text-red-600 hover:underline text-sm">Delete</button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                {badges.length === 0 && <p className="text-center py-4 text-gray-500">No custom badges created yet.</p>}
+                            </div>
+                        </>
+                    )}
+
+                    {(adminSection === 'badges_new' || adminSection === 'badges_edit') && (
+                         <>
+                             <button onClick={() => setAdminSection('badges')} className="text-blue-600 hover:underline mb-4">&larr; Back to Badge List</button>
+                             <h1 className="text-3xl font-bold">{editingBadgeId ? 'Edit Badge' : 'Create New Badge'}</h1>
+                              <form onSubmit={editingBadgeId ? handleAdminUpdateBadge : handleAdminCreateBadge} className="bg-white p-6 rounded-lg shadow space-y-4 max-w-lg">
+                                   <div>
+                                      <label className="block text-gray-700 mb-1">Badge Name</label>
+                                      <input
+                                          type="text"
+                                          value={newBadgeName}
+                                          onChange={(e) => setNewBadgeName(e.target.value)}
+                                          required
+                                          className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                  </div>
+                                  <div>
+                                      <label className="block text-gray-700 mb-1">Emoji (Single character)</label>
+                                      <input
+                                          type="text"
+                                          value={newBadgeEmoji}
+                                          onChange={(e) => setNewBadgeEmoji(e.target.value)}
+                                          required
+                                          maxLength={2} // Allow for emoji sequences
+                                          className="w-20 px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-center text-xl"
+                                      />
+                                  </div>
+                                   <div>
+                                      <label className="block text-gray-700 mb-1">Description (Optional)</label>
+                                      <input
+                                          type="text"
+                                          value={newBadgeDesc}
+                                          onChange={(e) => setNewBadgeDesc(e.target.value)}
+                                          className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                  </div>
+                                   <button type="submit" className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                                      {editingBadgeId ? 'Update Badge' : 'Create Badge'}
+                                  </button>
+                              </form>
+                         </>
+                     )}
+                </div>
+              )}
+
+
+             {/* --- Shop Management --- */}
+             {adminSection === 'shop' && hasPermission('manageShop') && (
+                <div className="space-y-6">
+                    <h1 className="text-3xl font-bold">Manage Shop</h1>
+                     <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                         <h2 className="text-xl font-semibold">Shop Status</h2>
+                         <p>The shop page is currently: <span className={`font-semibold ${showShop ? 'text-green-600' : 'text-red-600'}`}>{showShop ? 'Visible' : 'Hidden'}</span> to users.</p>
+                          <button
+                             onClick={handleAdminToggleShop}
+                             className={`px-4 py-2 rounded text-white ${showShop ? 'bg-red-500 hover:bg-red-600' : `bg-${siteSettings.secondaryColor} hover:bg-opacity-90`}`}
+                          >
+                             {showShop ? 'Hide Shop Page' : 'Make Shop Visible'}
+                         </button>
+                           <button onClick={() => handleNavigate('shop')} className="ml-4 text-blue-600 hover:underline">Preview Shop Page &rarr;</button>
+
+                         <h2 className="text-xl font-semibold pt-6 border-t mt-6">Shop Content (Placeholder)</h2>
+                         <p className="text-gray-600">Functionality to add/edit shop items would go here.</p>
+                         {/* Placeholder for item management UI */}
+                     </div>
+                </div>
+             )}
+
+              {/* --- Settings --- */}
+              {adminSection === 'settings' && hasPermission('manageSettings') && (
+                <div className="space-y-6">
+                    <h1 className="text-3xl font-bold">Site Settings</h1>
+                     <div className="bg-white p-6 rounded-lg shadow space-y-4 max-w-xl">
+                         <h2 className="text-xl font-semibold">Email Verification (SFTP Simulation)</h2>
+                         <p className="text-sm text-gray-600 mb-3">Configure SFTP details for simulated email actions (e.g., verification file drop). No actual email is sent in this demo.</p>
+                         <div>
+                             <label className="block text-gray-700 mb-1">SFTP Host</label>
+                             <input
+                                 type="text"
+                                 value={tempSftpConfig.host}
+                                 onChange={(e) => setTempSftpConfig(p => ({...p, host: e.target.value}))}
+                                 placeholder="sftp.example.com"
+                                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                         </div>
+                         <div className="flex space-x-4">
+                              <div className="flex-1">
+                                  <label className="block text-gray-700 mb-1">Port</label>
+                                  <input
+                                      type="text"
+                                      value={tempSftpConfig.port}
+                                      onChange={(e) => setTempSftpConfig(p => ({...p, port: e.target.value}))}
+                                      placeholder="22"
+                                      className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                              </div>
+                             <div className="flex-1">
+                                 <label className="block text-gray-700 mb-1">Username</label>
+                                 <input
+                                     type="text"
+                                     value={tempSftpConfig.user}
+                                     onChange={(e) => setTempSftpConfig(p => ({...p, user: e.target.value}))}
+                                      placeholder="sftp_user"
+                                     className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                 />
+                             </div>
+                         </div>
+                           <div>
+                             <label className="block text-gray-700 mb-1">Password</label>
+                             <input
+                                 type="password"
+                                 value={tempSftpConfig.pass}
+                                 onChange={(e) => setTempSftpConfig(p => ({...p, pass: e.target.value}))}
+                                 placeholder="Keep secure!"
+                                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                             />
+                         </div>
+                          <button onClick={handleAdminSaveChanges} className={`bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                             Save SFTP Settings
+                         </button>
+                    </div>
+                     {/* Add other settings like site name, registration toggle, etc. */}
+                </div>
+            )}
+
+             {/* Fallback for unknown section or insufficient permissions */}
+             {adminSection !== 'dashboard' &&
+                adminSection !== 'content' &&
+                adminSection !== 'styles' &&
+                !adminSection.startsWith('blogs') &&
+                adminSection !== 'users' &&
+                !adminSection.startsWith('admins') &&
+                !adminSection.startsWith('badges') &&
+                adminSection !== 'shop' &&
+                adminSection !== 'settings' &&
+                (
+                 <p className="text-red-500">Section not found or permission denied.</p>
+            )}
+
+
+        </main>
       </div>
     );
   };
 
-  const renderAdminOverview = () => (
-    <div>
-        <h1 className="text-2xl font-bold mb-4">Admin Overview</h1>
-         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-             <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-2">Total Users</h3>
-                 <p className="text-3xl font-bold">{users.length}</p>
-             </div>
-              <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-2">Total Admins</h3>
-                 <p className="text-3xl font-bold">{adminUsers.length}</p>
-             </div>
-              <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-2">Blog Posts</h3>
-                 <p className="text-3xl font-bold">{blogPosts.length}</p>
-             </div>
-              <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-2">User Posts</h3>
-                 <p className="text-3xl font-bold">{userPosts.length}</p>
-             </div>
-              <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-2">Server Status</h3>
-                 <p className={`text-3xl font-bold ${serverStatus === 'online' ? 'text-green-600' : serverStatus === 'offline' ? 'text-red-600' : 'text-yellow-600'}`}>{serverStatus.toUpperCase()}</p>
-             </div>
-         </div>
-    </div>
-);
+  // --- Main Render Logic ---
 
-const renderAdminManageContent = () => (
-    <div>
-        <h1 className="text-2xl font-bold mb-4">Manage Website Content</h1>
-        <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-             <h3 className="font-semibold text-lg mb-2">Home Page Content (Example)</h3>
-             <textarea
-                defaultValue="This is the editable home page content area. Add instructions or more fields as needed."
-                rows={5}
-                className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500 mb-2`}
-            />
-            <button className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}>Save Home Content</button>
-        </div>
-        {/* Add more content sections here */}
-    </div>
-);
+  // Conditionally render Admin Dashboard or the rest of the site
+  if (isAdminLoggedIn && currentPage === 'adminDashboard') {
+     return renderAdminDashboard();
+  }
 
-const renderAdminCustomizeStyles = () => (
-    <div>
-        <h1 className="text-2xl font-bold mb-4">Customize Website Styles</h1>
-         <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow space-y-4`}>
-            <div>
-                <label className="block text-gray-700 mb-1 font-medium">Primary Color</label>
-                <select
-                    name="primaryColor"
-                    value={siteStyles.primaryColor}
-                    onChange={handleStyleChange}
-                    className={`p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                >
-                    <option value="blue">Blue</option>
-                    <option value="green">Green</option>
-                    <option value="purple">Purple</option>
-                    <option value="red">Red</option>
-                    <option value="yellow">Yellow</option>
-                    <option value="indigo">Indigo</option>
-                     <option value="pink">Pink</option>
-                     <option value="gray">Gray</option>
-                </select>
-            </div>
-            <div>
-                <label className="block text-gray-700 mb-1 font-medium">Font Family</label>
-                <select
-                    name="fontFamily"
-                    value={siteStyles.fontFamily}
-                    onChange={handleStyleChange}
-                    className={`p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                >
-                    <option value="sans">Sans-Serif (Default)</option>
-                    <option value="serif">Serif</option>
-                    <option value="mono">Monospace</option>
-                </select>
-            </div>
-             <div>
-                <label className="block text-gray-700 mb-1 font-medium">Rounded Corners</label>
-                <select
-                    name="roundedCorners"
-                    value={siteStyles.roundedCorners}
-                    onChange={handleStyleChange}
-                    className={`p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                >
-                    <option value="none">None</option>
-                    <option value="sm">Small</option>
-                    <option value="md">Medium</option>
-                    <option value="lg">Large</option>
-                    <option value="xl">Extra Large</option>
-                     <option value="2xl">2XL</option>
-                     <option value="3xl">3XL</option>
-                    <option value="full">Full</option>
-                </select>
-            </div>
-             <p className="text-sm text-gray-500 italic">Changes are applied live (in this simulation).</p>
-         </div>
-    </div>
-);
+  // Render public-facing site
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+        {/* Don't render standard navbar on admin login page */}
+        {currentPage !== 'adminLogin' && renderNavbar()}
+        <main className="flex-grow container mx-auto px-4 py-8">
+            {currentPage === 'home' && renderHomePage()}
+            {currentPage === 'blog' && renderBlogPage()}
+            {currentPage === 'login' && renderLoginPage()}
+            {currentPage === 'register' && renderRegisterPage()}
+            {currentPage === 'adminLogin' && renderAdminLoginPage()}
+            {currentPage === 'profile' && renderProfilePage()}
+            {currentPage === 'userPosts' && renderUserPostsPage()}
+            {currentPage === 'serverStatus' && renderServerStatusPage()}
+            {currentPage === 'shop' && renderShopPage()}
 
- const renderAdminManageBlog = () => (
-    <div>
-        <h1 className="text-2xl font-bold mb-4">Manage Blog Posts</h1>
-
-        {/* Add New Blog Post Form */}
-        <form onSubmit={handleAddBlog} className={`mb-6 p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-             <h3 className="font-semibold text-lg mb-3">Add New Blog Post</h3>
-            <div className="mb-3">
-                <label className="block text-gray-700 mb-1" htmlFor="new-blog-title">Title</label>
-                <input
-                    type="text"
-                    id="new-blog-title"
-                    value={newBlogTitle}
-                    onChange={(e) => setNewBlogTitle(e.target.value)}
-                    className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                    required
-                />
-            </div>
-             <div className="mb-3">
-                <label className="block text-gray-700 mb-1" htmlFor="new-blog-content">Content</label>
-                <textarea
-                    id="new-blog-content"
-                    value={newBlogContent}
-                    onChange={(e) => setNewBlogContent(e.target.value)}
-                    rows={5}
-                    className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                    required
-                ></textarea>
-            </div>
-             <button
-                type="submit"
-                className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-            >
-                Add Post
-            </button>
-        </form>
-
-         {/* List Existing Blog Posts */}
-         <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-            <h3 className="font-semibold text-lg mb-3">Existing Blog Posts</h3>
-             <ul className="space-y-2">
-                 {blogPosts.slice().sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime()).map(post => (
-                     <li key={post.id} className="flex justify-between items-center p-2 border-b last:border-b-0">
-                         <span>
-                             <a href={`#blog/${post.id}`} target="_blank" rel="noopener noreferrer" className={`hover:text-${siteStyles.primaryColor}-600 hover:underline`}>{post.title}</a>
-                             <span className="text-xs text-gray-500 ml-2">({post.createdAt.toLocaleDateString()})</span>
-                         </span>
-                         <button
-                            onClick={() => handleDeleteBlog(post.id)}
-                             className={`px-2 py-1 bg-red-500 text-white text-xs ${getRoundedClass('button')} hover:bg-red-600`}
-                         >
-                             Delete
-                         </button>
-                     </li>
-                 ))}
-                 {blogPosts.length === 0 && <p className="italic text-gray-500">No blog posts yet.</p>}
-            </ul>
-        </div>
-    </div>
- );
-
-const renderAdminManageUsers = () => (
-    <div>
-        <h1 className="text-2xl font-bold mb-4">Manage Users</h1>
-         <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow overflow-x-auto`}>
-            <h3 className="font-semibold text-lg mb-3">All Users ({users.length + adminUsers.length})</h3>
-            <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                    <tr>
-                        <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                        <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                        <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                         <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Badges</th>
-                         <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Link Admin</th>
-                        <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                    </tr>
-                </thead>
-                 <tbody className="bg-white divide-y divide-gray-200">
-                     {[...adminUsers, ...users].map(user => {
-                         const userIsAdmin = isAdmin(user);
-                         const linkedAdmin = userIsAdmin ? user as AdminUser : null;
-                         const userBadges = badges.filter(b => user.badges.includes(b.id));
-
-                        return (
-                            <tr key={user.id}>
-                                <td className="px-4 py-2 whitespace-nowrap">
-                                    <div className="flex items-center">
-                                         {user.profilePicUrl ? (
-                                            <img src={user.profilePicUrl} alt={user.username} className={`w-6 h-6 ${getRoundedClass('full')} mr-2 object-cover`} />
-                                         ) : (
-                                             <div className={`bg-gray-300 border-dashed border ${getRoundedClass('full')} w-6 h-6 flex items-center justify-center text-xs text-gray-600 mr-2`}>
-                                                {user.username.substring(0,1)}
-                                            </div>
-                                         )}
-                                        {user.username}
-                                    </div>
-                                </td>
-                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{user.email}</td>
-                                <td className="px-4 py-2 whitespace-nowrap text-sm">
-                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${userIsAdmin ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
-                                        {userIsAdmin ? 'Admin' : 'User'}
-                                    </span>
-                                     {!user.isVerified && !userIsAdmin && <span className="ml-1 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Unverified</span>}
-                                </td>
-                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                                     <div className="flex items-center space-x-1">
-                                         {userBadges.map(b => (
-                                             <span key={b.id} title={b.name} className="relative group">
-                                                 {b.emoji}
-                                                 <button onClick={() => handleRemoveBadge(user.id, b.id)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-3 h-3 flex items-center justify-center text-xxs opacity-0 group-hover:opacity-100">&times;</button>
-                                             </span>
-                                         ))}
-                                         {userBadges.length === 0 && <span className="text-gray-400 italic">None</span>}
-                                         {/* Dropdown to add badge */}
-                                          <select onChange={(e) => e.target.value && handleAssignBadge(user.id, e.target.value)} value="" className="ml-1 text-xs border-none focus:ring-0 p-0">
-                                             <option value="" disabled>+ Add</option>
-                                             {badges.filter(b => !user.badges.includes(b.id)).map(b => (
-                                                <option key={b.id} value={b.id}>{b.emoji} {b.name}</option>
-                                             ))}
-                                          </select>
-                                     </div>
-                                </td>
-                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                     {userIsAdmin ? (
-                                         <select
-                                             value={linkedAdmin?.linkedUserId || ''}
-                                             onChange={(e) => handleLinkAdminAccount(user.id, e.target.value)}
-                                             className={`text-xs p-1 border ${getRoundedClass('input')} ${linkedAdmin?.linkedUserId ? 'border-green-500' : 'border-gray-300'}`}
-                                         >
-                                             <option value="">None</option>
-                                             {users.map(u => (
-                                                 <option key={u.id} value={u.id}>{u.username}</option>
-                                             ))}
-                                         </select>
-                                     ) : (
-                                        // Show which admin is linked, if any
-                                        adminUsers.find(a => a.linkedUserId === user.id)?.username || <span className="text-gray-400 italic">-</span>
-                                     )}
-                                 </td>
-                                <td className="px-4 py-2 whitespace-nowrap text-sm font-medium space-x-2">
-                                     {/* Add actions like Ban, Mute, Edit Roles (if applicable) */}
-                                     <button className="text-red-600 hover:text-red-900 text-xs">Ban</button>
-                                      {!userIsAdmin && !user.isVerified && <button onClick={() => handleVerifyEmail(user.id)} className="text-green-600 hover:text-green-900 text-xs">Verify</button>}
-                                </td>
-                            </tr>
-                         )
-                    })}
-                </tbody>
-            </table>
-        </div>
-    </div>
-);
-
- const renderAdminManageAdmins = () => {
-     const isEditing = !!editingAdmin;
-     const formTitle = isEditing ? `Editing Admin: ${editingAdmin.username}` : 'Add New Admin';
-     const submitText = isEditing ? 'Update Admin' : 'Add Admin';
-     const submitHandler = isEditing ? handleUpdateAdmin : handleAddAdmin;
-
-    return (
-        <div>
-            <h1 className="text-2xl font-bold mb-4">Manage Administrators</h1>
-
-              {/* Add/Edit Admin Form */}
-            <form onSubmit={submitHandler} className={`mb-6 p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-3">{formTitle}</h3>
-                  {isEditing && <p className="text-sm text-gray-500 mb-3">Editing user ID: {editingAdmin.id}</p>}
-                 {showPasswordChangePrompt && editingAdmin?.email === 'admin@mmpcs.net' && (
-                     <p className="text-sm text-red-600 mb-3 font-medium">Please set a new password for the default admin account.</p>
-                 )}
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-                     <div>
-                        <label className="block text-gray-700 mb-1" htmlFor="new-admin-username">Username</label>
-                        <input
-                            type="text"
-                            id="new-admin-username"
-                            value={newAdminUsername}
-                            onChange={(e) => setNewAdminUsername(e.target.value)}
-                             placeholder={isEditing ? editingAdmin.username : 'Optional'}
-                             className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                             required={!isEditing} // Required for new admins
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-gray-700 mb-1" htmlFor="new-admin-email">Email</label>
-                        <input
-                            type="email"
-                            id="new-admin-email"
-                            value={newAdminEmail}
-                            onChange={(e) => setNewAdminEmail(e.target.value)}
-                             placeholder={isEditing ? editingAdmin.email : ''}
-                            className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-gray-700 mb-1" htmlFor="new-admin-password">
-                             {isEditing ? 'New Password (leave blank to keep current)' : 'Password'}
-                        </label>
-                        <input
-                            type="password"
-                            id="new-admin-password"
-                            value={newAdminPassword}
-                            onChange={(e) => setNewAdminPassword(e.target.value)}
-                            className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                             required={!isEditing || (showPasswordChangePrompt && editingAdmin?.email === 'admin@mmpcs.net')} // Required for new or default admin password change
-                        />
-                    </div>
-                </div>
-
-                 <div className="mb-4">
-                    <label className="block text-gray-700 mb-2 font-medium">Permissions</label>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                        {Object.entries(PERMISSIONS).map(([key, value]) => (
-                             <label key={value} className="flex items-center space-x-2 cursor-pointer">
-                                 <input
-                                     type="checkbox"
-                                     checked={selectedPermissions.includes(value)}
-                                     onChange={() => handleTogglePermission(value)}
-                                      className={`rounded border-gray-300 text-${siteStyles.primaryColor}-600 shadow-sm focus:border-${siteStyles.primaryColor}-300 focus:ring focus:ring-offset-0 focus:ring-${siteStyles.primaryColor}-200 focus:ring-opacity-50`}
-                                 />
-                                 <span className="text-sm text-gray-700">{key.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())}</span>
-                             </label>
-                         ))}
-                    </div>
-                </div>
-
-                 <div className="flex items-center space-x-3">
-                     <button
-                        type="submit"
-                        className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-                    >
-                        {submitText}
-                    </button>
-                     {isEditing && (
-                        <button
-                            type="button"
-                            onClick={() => { setEditingAdmin(null); setNewAdminUsername(''); setNewAdminEmail(''); setNewAdminPassword(''); setSelectedPermissions([]);}}
-                            className={`px-4 py-2 bg-gray-300 text-gray-700 ${getRoundedClass('button')} hover:bg-gray-400`}
-                        >
-                            Cancel Edit
-                        </button>
-                     )}
+            {/* Fallback for unknown pages */}
+             {currentPage !== 'home' &&
+              currentPage !== 'blog' &&
+              currentPage !== 'login' &&
+              currentPage !== 'register' &&
+              currentPage !== 'adminLogin' &&
+              currentPage !== 'profile' &&
+              currentPage !== 'userPosts' &&
+              currentPage !== 'serverStatus' &&
+              currentPage !== 'shop' &&
+              currentPage !== 'adminDashboard' /* Handled above */ &&
+              (
+                 <div className="text-center py-10">
+                     <h1 className="text-3xl font-bold text-red-600">404 - Page Not Found</h1>
+                     <p className="mt-4 text-gray-600">The page you requested could not be found.</p>
+                     <button onClick={() => handleNavigate('home')} className={`mt-6 bg-${siteSettings.primaryColor} text-white px-4 py-2 rounded hover:bg-opacity-90`}>
+                        Go to Home
+                     </button>
                  </div>
-            </form>
-
-
-             {/* List Existing Admins */}
-            <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow overflow-x-auto`}>
-                <h3 className="font-semibold text-lg mb-3">Current Administrators</h3>
-                <table className="min-w-full divide-y divide-gray-200">
-                     <thead className="bg-gray-50">
-                        <tr>
-                            <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Admin</th>
-                            <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                            <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Permissions</th>
-                            <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th scope="col" className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                        </tr>
-                     </thead>
-                     <tbody className="bg-white divide-y divide-gray-200">
-                         {adminUsers.map(admin => (
-                             <tr key={admin.id}>
-                                 <td className="px-4 py-2 whitespace-nowrap">{admin.username}</td>
-                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">{admin.email}</td>
-                                <td className="px-4 py-2 text-sm text-gray-500 max-w-xs">
-                                     {admin.permissions.length === Object.keys(PERMISSIONS).length
-                                         ? <span className="font-medium">All</span>
-                                         : admin.permissions.map(p => p.split('_')[1]).join(', ') || <span className="italic">None</span>
-                                     }
-                                 </td>
-                                 <td className="px-4 py-2 whitespace-nowrap text-sm">
-                                      {!admin.passwordChanged && admin.email === 'admin@mmpcs.net' && <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Default Pass</span>}
-                                      {admin.linkedUserId && <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">Linked</span>}
-                                 </td>
-                                <td className="px-4 py-2 whitespace-nowrap text-sm font-medium space-x-2">
-                                     <button onClick={() => handleEditAdmin(admin)} className={`text-${siteStyles.primaryColor}-600 hover:text-${siteStyles.primaryColor}-900 text-xs`}>Edit</button>
-                                     <button
-                                         onClick={() => handleDeleteAdmin(admin.id)}
-                                         disabled={adminUsers.length <= 1 || loggedInUser?.id === admin.id || (admin.email === 'admin@mmpcs.net' && !admin.passwordChanged) }
-                                         className={`text-red-600 hover:text-red-900 text-xs disabled:text-gray-400 disabled:cursor-not-allowed`}
-                                    >
-                                         Delete
-                                     </button>
-                                 </td>
-                            </tr>
-                         ))}
-                     </tbody>
-                </table>
-             </div>
-        </div>
-     );
- };
-
- const renderAdminManageBadges = () => {
-     const isEditing = !!editingBadge;
-     const formTitle = isEditing ? `Editing Badge: ${editingBadge.name}` : 'Add New Badge';
-     const submitText = isEditing ? 'Update Badge' : 'Add Badge';
-     const submitHandler = isEditing ? handleUpdateBadge : handleAddBadge;
-
-     return (
-        <div>
-            <h1 className="text-2xl font-bold mb-4">Manage Badges & Titles</h1>
-
-            {/* Add/Edit Badge Form */}
-            <form onSubmit={submitHandler} className={`mb-6 p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                 <h3 className="font-semibold text-lg mb-3">{formTitle}</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
-                    <div>
-                        <label className="block text-gray-700 mb-1" htmlFor="new-badge-name">Name</label>
-                        <input
-                            type="text"
-                            id="new-badge-name"
-                            value={newBadgeName}
-                            onChange={(e) => setNewBadgeName(e.target.value)}
-                            className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                            required
-                        />
-                    </div>
-                     <div>
-                        <label className="block text-gray-700 mb-1" htmlFor="new-badge-emoji">Emoji</label>
-                        <input
-                            type="text"
-                            id="new-badge-emoji"
-                            value={newBadgeEmoji}
-                            maxLength={2} // Allow for emoji sequences but keep it short
-                            onChange={(e) => setNewBadgeEmoji(e.target.value)}
-                            className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                            required
-                        />
-                    </div>
-                    <div className="md:col-span-3">
-                        <label className="block text-gray-700 mb-1" htmlFor="new-badge-desc">Description (Tooltip)</label>
-                        <input
-                            type="text"
-                            id="new-badge-desc"
-                            value={newBadgeDesc}
-                            onChange={(e) => setNewBadgeDesc(e.target.value)}
-                            className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`}
-                        />
-                    </div>
-                 </div>
-                <div className="flex items-center space-x-3">
-                     <button
-                        type="submit"
-                        className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-                    >
-                        {submitText}
-                    </button>
-                     {isEditing && (
-                        <button
-                            type="button"
-                            onClick={() => { setEditingBadge(null); setNewBadgeName(''); setNewBadgeEmoji(''); setNewBadgeDesc(''); }}
-                             className={`px-4 py-2 bg-gray-300 text-gray-700 ${getRoundedClass('button')} hover:bg-gray-400`}
-                        >
-                            Cancel Edit
-                        </button>
-                     )}
-                 </div>
-            </form>
-
-            {/* List Existing Badges */}
-            <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-                <h3 className="font-semibold text-lg mb-3">Existing Badges</h3>
-                 <ul className="space-y-2">
-                     {badges.map(badge => (
-                         <li key={badge.id} className="flex justify-between items-center p-2 border-b last:border-b-0">
-                             <div className="flex items-center space-x-3">
-                                <span className="text-xl">{badge.emoji}</span>
-                                <div>
-                                    <span className="font-medium">{badge.name}</span>
-                                    <p className="text-sm text-gray-500">{badge.description}</p>
-                                </div>
-                            </div>
-                             <div className="space-x-2">
-                                 <button onClick={() => handleEditBadge(badge)} className={`text-${siteStyles.primaryColor}-600 hover:text-${siteStyles.primaryColor}-900 text-xs`}>Edit</button>
-                                 <button onClick={() => handleDeleteBadge(badge.id)} className="text-red-600 hover:text-red-900 text-xs">Delete</button>
-                            </div>
-                         </li>
-                     ))}
-                     {badges.length === 0 && <p className="italic text-gray-500">No badges created yet.</p>}
-                </ul>
-            </div>
-        </div>
-    );
- };
-
-const renderAdminConfigureSmtp = () => (
-    <div>
-        <h1 className="text-2xl font-bold mb-4">System Configuration</h1>
-
-        {/* SMTP Configuration Form */}
-         <form onSubmit={handleSaveSmtpConfig} className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-            <h3 className="font-semibold text-lg mb-3">SMTP Settings (for Email Verification)</h3>
-             <p className="text-sm text-gray-500 mb-4 italic">These settings are simulated and won't actually send emails in this demo.</p>
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-                 <div>
-                    <label className="block text-gray-700 mb-1" htmlFor="smtp-host">SMTP Host</label>
-                    <input type="text" id="smtp-host" name="host" value={smtpConfig.host} onChange={handleSmtpConfigChange} className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`} />
-                </div>
-                <div>
-                    <label className="block text-gray-700 mb-1" htmlFor="smtp-port">SMTP Port</label>
-                    <input type="number" id="smtp-port" name="port" value={smtpConfig.port} onChange={handleSmtpConfigChange} className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`} />
-                </div>
-                 <div>
-                    <label className="block text-gray-700 mb-1" htmlFor="smtp-user">SMTP Username</label>
-                    <input type="text" id="smtp-user" name="user" value={smtpConfig.user} onChange={handleSmtpConfigChange} className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`} />
-                </div>
-                <div>
-                    <label className="block text-gray-700 mb-1" htmlFor="smtp-pass">SMTP Password</label>
-                    <input type="password" id="smtp-pass" name="pass" value={smtpConfig.pass} onChange={handleSmtpConfigChange} className={`w-full p-2 border ${getRoundedClass('input')} focus:ring-${siteStyles.primaryColor}-500 focus:border-${siteStyles.primaryColor}-500`} />
-                </div>
-            </div>
-             <button
-                type="submit"
-                 className={`px-4 py-2 ${getPrimaryColorClasses('bg')} text-white ${getRoundedClass('button')} hover:${getPrimaryColorClasses('bg', 600)}`}
-             >
-                 Save SMTP Config
-             </button>
-        </form>
-         {/* Server Status Control Moved to Status Page for combined view */}
+             )}
+        </main>
+         {/* Don't render standard footer on admin login page */}
+        {currentPage !== 'adminLogin' && renderFooter()}
     </div>
-);
-
-const renderAdminModeratePosts = () => (
-     <div>
-        <h1 className="text-2xl font-bold mb-4">Moderate User Posts</h1>
-         <div className={`p-4 bg-white border ${getRoundedClass('card')} shadow`}>
-             <h3 className="font-semibold text-lg mb-3">Recent User Posts ({userPosts.length})</h3>
-             <div className="space-y-4">
-                {userPosts.length > 0 ? userPosts.slice().sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime()).map(post => {
-                 const author = findUserById(post.authorId);
-                 return (
-                    <div key={post.id} className={`p-3 border ${getRoundedClass('md')} bg-gray-50`}>
-                        <div className="flex justify-between items-start mb-2">
-                           <div>
-                                {author ? renderUserProfile(author) : <span className="italic text-gray-500">Unknown User</span>}
-                                 <span className="text-xs text-gray-400 ml-2">{post.createdAt.toLocaleString()}</span>
-                           </div>
-                            <button
-                                // onClick={() => handleDeleteUserPost(post.id)} // Add this handler
-                                className={`px-2 py-1 bg-red-500 text-white text-xs ${getRoundedClass('button')} hover:bg-red-600`}
-                             >
-                                Delete Post
-                            </button>
-                        </div>
-                        <p className="text-gray-800 mb-2">{post.content}</p>
-                         {post.mediaUrl && (
-                            <div className="mt-2">
-                                <img src={post.mediaUrl} alt="User upload" className={`max-w-xs max-h-40 ${getRoundedClass('md')} border`} />
-                             </div>
-                         )}
-                    </div>
-                    );
-                }) : <p className="italic text-gray-500">No user posts to moderate.</p>}
-             </div>
-         </div>
-     </div>
-);
-
-
-  // --- Page Router ---
-  const renderCurrentPage = () => {
-    if (currentPage === 'adminLogin') return renderAdminLoginPage();
-    if (currentPage === 'adminDashboard' && isAdmin(loggedInUser)) return renderAdminDashboard();
-    if (currentPage === 'login') return renderLoginPage();
-    if (currentPage === 'register') return renderRegisterPage();
-
-     // Render standard layout for other pages
-     return (
-        <div className={`min-h-screen bg-gray-50 ${getFontFamilyClass()}`}>
-            {renderNavbar()}
-            <div className="main-content">
-                {currentPage === 'home' && renderHomePage()}
-                {(currentPage === 'blog' || currentPage.startsWith('blog/')) && renderBlogPage()}
-                {currentPage === 'posts' && renderUserPostsPage()}
-                {currentPage === 'status' && renderStatusPage()}
-                {currentPage === 'profile' && renderProfilePage()}
-                {currentPage === 'shop' && renderShopPage()}
-                {/* Add other page renderings here */}
-            </div>
-             {/* Optional Footer */}
-            <footer className="p-4 bg-gray-200 text-center text-gray-600 text-sm mt-8">
-                © {new Date().getFullYear()} Minecraft Server Name. All rights reserved.
-            </footer>
-        </div>
-     );
-  };
-
-  return renderCurrentPage();
+  );
 };
 
 export default MinecraftWebsite;
